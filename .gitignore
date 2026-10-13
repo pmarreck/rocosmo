@@ -1,0 +1,6 @@
+inbox/
+.direnv/
+result
+result-*
+local/
+.dirtree-state

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Complete test entry point for rocosmo research probes.
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${IN_NIX_SHELL-}" ]; then
+	exec nix develop "$ROOT" -c "$ROOT/test" "$@"
+fi
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/rocosmo-test.XXXXXX")"
+export ROOT SCRATCH
+
+source "$ROOT/tests/lib.bash"
+[ -f "$ROOT/local/hosts.env" ] && source "$ROOT/local/hosts.env"
+for suite in "$ROOT"/tests/probes/*.bash; do
+	source "$suite"
+done
+
+printf '\n%d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"
+if [ "$FAIL_COUNT" -eq 0 ]; then rm -rf -- "$SCRATCH"; else echo "scratch kept: $SCRATCH"; fi
+[ "$FAIL_COUNT" -eq 0 ]
