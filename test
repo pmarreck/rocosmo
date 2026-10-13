@@ -8,6 +8,9 @@ if [ -z "${IN_NIX_SHELL-}" ]; then
 fi
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/rocosmo-test.XXXXXX")"
 export ROOT SCRATCH
+# Isolate suites from the invoking terminal: bash sources ~/.bashrc when its
+# stdin is a socket, which leaks the caller's environment into probes.
+exec </dev/null
 
 source "$ROOT/tests/lib.bash"
 [ -f "$ROOT/local/hosts.env" ] && source "$ROOT/local/hosts.env"

@@ -41,7 +41,15 @@ const script_tail =
 	"esac\n" ++
 	"f=$c/$i\n" ++
 	"if [ ! -x \"$f\" ];then\n" ++
-	"mkdir -p \"$c\"||exit 126\n" ++
+	// Unwritable cache home: use a private per-user TMPDIR directory, verified
+	// (not a symlink, owned by us) before anything in it is trusted or run.
+	"if ! mkdir -p \"$c\" 2>/dev/null;then\n" ++
+	"c=${TMPDIR:-/tmp}/rocosmo-$(id -u) f=$c/$i\n" ++
+	"mkdir -m 700 \"$c\" 2>/dev/null\n" ++
+	"[ -d \"$c\" ]&&[ ! -L \"$c\" ]&&[ -O \"$c\" ]||{ echo \"$0: no private writable cache directory\" >&2;exit 126;}\n" ++
+	"fi\n" ++
+	"fi\n" ++
+	"if [ ! -x \"$f\" ];then\n" ++
 	"t=$f.$$ b=$((n/4096)) r=$((n%4096))\n" ++
 	// BSD dd treats count=0 as "until EOF", so never call dd with a zero count.
 	"{ { [ $b = 0 ]||dd if=\"$s\" bs=4096 skip=$((o/4096)) count=$b;}&&{ [ $r = 0 ]||dd if=\"$s\" bs=1 skip=$((o+b*4096)) count=$r;};} 2>/dev/null >\"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++

@@ -23,7 +23,7 @@ assert_rc0 "llvm-objdump parses the relocated PE headers"
 tools="$(minimal_path "$p3/bin" uname mkdir dd chmod mv rm)"
 for shell in dash bash zsh busybox; do
 	cache="$p3/cache-$shell"
-	if [ "$shell" = busybox ]; then cmd=(busybox sh "$app" 20); else cmd=("$shell" "$app" 20); fi
+	if [ "$shell" = busybox ]; then cmd=("${ROCOSMO_BUSYBOX:?}" sh "$app" 20); else cmd=("$shell" "$app" 20); fi
 	run_capture env -i PATH="$tools" XDG_CACHE_HOME="$cache" "$(command -v "${cmd[0]}")" "${cmd[@]:1}"
 	assert_eq "NATIVE linux x86_64 via $shell, PATH limited to uname mkdir dd chmod mv rm" "121" "$out"
 	[ -z "$err" ] || fail "$shell run is silent on stderr" "$err"
@@ -85,13 +85,13 @@ assert_eq "32 concurrent cold starts: all correct, one cache entry" "0 1" "$bad 
 
 # The same file inside WSL2 on the Windows host: a real Linux x86_64 kernel in a
 # Hyper-V VM. Native CPU execution, but a Linux result, not a Windows one.
-host="${ROCOSMO_WSL_VIA_WINDOWS_HOST-}"
+host="${ROCOSMO_WSL_X64_HOST-}"
 if [ -n "$host" ]; then
 	scp -q "${SSH_OPTS[@]}" "$app" "$host:rocosmo-p3wsl"
-	run_capture ssh "${SSH_OPTS[@]}" "$host" 'wsl -e sh -c "XDG_CACHE_HOME=/tmp/rocosmo-p3-cache sh ./rocosmo-p3wsl 20"'
-	assert_eq "WSL2 linux x86_64 on the Windows host (same file)" "121" "$out"
+	run_capture ssh "${SSH_OPTS[@]}" "$host" 'XDG_CACHE_HOME="/tmp/rocosmo-p3-cache-$$" ./rocosmo-p3wsl 20'
+	assert_eq "WSL2 linux x86_64 on the Windows host (same file, direct ./ exec)" "121" "$out"
 else
-	fail "WSL2 linux x86_64 run" "ROCOSMO_WSL_VIA_WINDOWS_HOST not set"
+	fail "WSL2 linux x86_64 run" "ROCOSMO_WSL_X64_HOST not set"
 fi
 
 # macOS x86_64 branch under Rosetta 2 on Apple Silicon: EMULATION evidence only.
@@ -103,3 +103,17 @@ if [ -n "$host" ]; then
 else
 	fail "EMULATED macOS x86_64 (Rosetta 2) run" "ROCOSMO_MACOS_ARM64_HOST not set"
 fi
+
+# Unwritable cache location: fall back to a private per-user directory under
+# TMPDIR, created 0700, and refuse one that is a symlink (possible hijack).
+fb_tools="$(minimal_path "$p3/bin-fb" uname mkdir dd chmod mv rm id)"
+fb_tmp="$p3/fbtmp"; mkdir -p "$fb_tmp"
+run_capture env -i PATH="$fb_tools" HOME=/proc/rocosmo-nonexistent XDG_CACHE_HOME=/proc/rocosmo-nonexistent TMPDIR="$fb_tmp" "$(command -v dash)" "$app" 20
+assert_eq "unwritable cache dir falls back to a private TMPDIR cache" "121" "$out"
+fb_dir="$fb_tmp/rocosmo-$(id -u)"
+assert_eq "fallback cache dir is mode 700 and holds one entry" "700 1" "$(stat -c %a "$fb_dir" 2>/dev/null) $(ls "$fb_dir" 2>/dev/null | wc -l)"
+hij_tmp="$p3/hijtmp"; mkdir -p "$hij_tmp" "$p3/elsewhere"
+ln -s "$p3/elsewhere" "$hij_tmp/rocosmo-$(id -u)"
+run_capture env -i PATH="$fb_tools" HOME=/proc/rocosmo-nonexistent XDG_CACHE_HOME=/proc/rocosmo-nonexistent TMPDIR="$hij_tmp" "$(command -v dash)" "$app" 20
+assert_eq "symlinked fallback cache dir is refused with exit 126" "126" "$rc"
+assert_eq "nothing was extracted through the symlink" "0" "$(ls "$p3/elsewhere" | wc -l)"

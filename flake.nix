@@ -79,7 +79,9 @@
 						pkgs.jq
 						pkgs.dash
 						pkgs.zsh
-					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu pkgs.busybox ];
+					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu ];
+					# Busybox applets would shadow coreutils/tar on PATH; expose only the binary.
+					ROCOSMO_BUSYBOX = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.busybox}/bin/busybox";
 				};
 			});
 
