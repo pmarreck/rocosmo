@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Build unpatch (decode-only zstd 1.5.x, space-optimized per upstream
+# lib/README.md) and a no-decoder baseline for each target with zig cc.
+# Prints one line per target: target, total bytes, baseline bytes, decoder bytes.
+# Usage: build OUT_DIR   (needs ROCOSMO_ZSTD_SRC from the dev shell)
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+out="${1:?usage: build OUT_DIR}"
+lib="${ROCOSMO_ZSTD_SRC:?run inside nix develop}/lib"
+mkdir -p "$out" || exit 1
+srcs=("$lib"/common/{entropy_common,error_private,fse_decompress,xxhash,zstd_common}.c
+	"$lib"/decompress/{huf_decompress,zstd_ddict,zstd_decompress,zstd_decompress_block}.c)
+defs=(-DZSTD_LEGACY_SUPPORT=0 -DHUF_FORCE_DECOMPRESS_X1 -DZSTD_FORCE_DECOMPRESS_SEQUENCES_SHORT
+	-DZSTD_NO_INLINE -DZSTD_STRIP_ERROR_STRINGS -DZSTD_DISABLE_ASM -DZSTD_TRACE=0 -DZSTD_MULTITHREAD=0)
+common=(-Os -s -ffunction-sections -fdata-sections -fno-stack-protector -I"$lib")
+status=0
+for t in x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos x86_64-windows aarch64-windows x86_64-freebsd x86_64-netbsd; do
+	ext=""; gc=(-Wl,--gc-sections)
+	case "$t" in *windows) ext=.exe;; *macos) gc=(-Wl,-dead_strip);; esac
+	exe="$out/unpatch-$t$ext" base="$out/baseline-$t$ext"
+	if zig cc -target "$t" "${common[@]}" "${gc[@]}" "${defs[@]}" -o "$exe" "$here/unpatch.c" "${srcs[@]}" 2>"$out/log-$t" &&
+		zig cc -target "$t" "${common[@]}" "${gc[@]}" -DNO_ZSTD -o "$base" "$here/unpatch.c" 2>>"$out/log-$t"; then
+		a=$(wc -c < "$exe" | tr -d ' ') b=$(wc -c < "$base" | tr -d ' ')
+		printf '%-20s total %7d  baseline %7d  decoder %7d\n' "$t" "$a" "$b" $((a - b))
+	else
+		echo "build failed: $t (see $out/log-$t)" >&2; status=1
+	fi
+done
+exit $status

@@ -45,7 +45,9 @@
 
 Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a small shared native runtime, cached once per machine. The runtime rebuilds the payload from zstd frames, where secondary targets are zstd `--patch-from` deltas against a reference, and then executes it. Large multi-language apps (100 MB-class Zig/Rust/Roc binaries) are in view, not only small Roc apps.
 
-- [ ] Measure gzip vs solid zstd vs packer-chosen delta layouts, decoder cost included, on a realistically sized Roc app and on real large Zig/Rust multi-target binaries.
-- [ ] Decode-only zstd: size per target and support for raw-content (`--patch-from`) dictionaries.
-- [ ] Research: OpenBSD syscall pinning vs a libc-free runtime; in-memory exec on Linux/BSD; base-system gzip on BSDs; notarizing bare Mach-O executables; Rust/Zig target coverage for every OS/arch pair.
-- [ ] Write findings and a recommendation into RESEARCH.md.
+- [x] Measure gzip vs solid zstd vs packer-chosen delta layouts, decoder cost included: Roc compiler (1 GB), ripgrep, z7z (9 targets incl. BSDs), a synthetic 600-function Roc app and the P2 app. (2026-10-13 4:55 PM EDT)
+- [x] Decode-only zstd: 28-38 KB per target, applies --patch-from deltas, rejects a wrong reference. (2026-10-13 4:30 PM EDT)
+- [x] Research: OpenBSD syscall pinning, in-memory exec, BSD base gzip, bare Mach-O notarization, Rust/Zig target tiers. (2026-10-13 4:40 PM EDT)
+- [x] Write findings and a recommendation into RESEARCH.md §10. (2026-10-13 4:55 PM EDT)
+- [ ] Build the shared runtime (decode-only zstd, mini_blar index, memfd or cache exec) and measure its real size; then let rocosmo-pack choose gzip-only or zstd+delta per container.
+- [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.

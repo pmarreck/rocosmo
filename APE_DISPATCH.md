@@ -53,12 +53,28 @@ The script that follows the header does, in order:
      the file at a fixed offset, `gzip -dc` it to `$t.$$`, `chmod 755`, `mv`
      into place, then `exec "$t" "$o" "$@"`. The loader maps the matching ELF
      image from the APE file itself.
-   - **macOS x86_64:** a `dd ... conv=notrunc` patches the Mach-O header into
-     place, then the kernel loads the file natively.
+   - **macOS x86_64:** extract the same gzip-compressed x86_64 loader as on
+     Linux, then `dd if="$t.$$" of="$t.$$" skip=5 count=8 bs=64 conv=notrunc`
+     copies 512 bytes inside that *extracted copy* to its front, turning it
+     into a Mach-O. It is cached at `$t` and exec'd. The program file itself
+     is not modified.
    - **macOS arm64:** require `cc` (prints `please run: xcode-select --install`
      otherwise), extract `ape-m1.c` via `dd | gzip -dc`, compile it with
      `cc -w -O`, cache the binary, exec it.
 5. Otherwise print `this ape program lacks $m support` and exit 127.
+
+Only `--assimilate` writes to the program file: on Linux/BSD,
+`exec 7<> "$o"` plus a `printf` overwrites the first 64 bytes with an ELF
+header; on x86_64 macOS, `dd if="$o" of="$o" ... conv=notrunc` copies the
+Mach-O header to offset 0. The result is a plain native executable for that
+one platform.
+
+The original APE design ([justine.lol/ape.html](https://justine.lol/ape.html),
+2020) did this on every first run instead: the stub opened its own file
+read-write, `printf`'d an ELF header over `MZqFpD`, and re-`exec`'d itself
+(falling back to `qemu-x86_64`). That copy then stopped running on Windows,
+and the scheme needed write access to the program file. Later releases moved
+to the separate cached loader described above.
 
 External tools the stub needs: `sh`, `uname`, `mkdir`, `dd`, `gzip`, `chmod`,
 `mv`, plus `cc` on Apple Silicon. Probe P1 runs a Roc-built APE on Linux with

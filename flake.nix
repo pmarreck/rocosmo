@@ -79,8 +79,12 @@
 						pkgs.jq
 						pkgs.dash
 						pkgs.zsh
+						pkgs.zstd
+						pkgs.xz
 					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu ];
 					# Busybox applets would shadow coreutils/tar on PATH; expose only the binary.
+					# Upstream zstd sources for the decode-only decoder probe (P6).
+					ROCOSMO_ZSTD_SRC = "${pkgs.zstd.src}";
 					ROCOSMO_BUSYBOX = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.busybox}/bin/busybox";
 				};
 			});

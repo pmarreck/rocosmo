@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Measure container size under different payload encodings for one set of
+# per-target executables (one file per OS/CPU in IN_DIR):
+#   gzip -9 per payload (decodable by every POSIX target's base gzip),
+#   zstd per payload, zstd as one solid stream, and the optimal depth-1 layout
+#   of whole zstd frames plus --patch-from deltas (see layout.awk).
+# Every frame in the chosen layout is decoded and compared with the original.
+# Files named with --free are stored raw (the Windows x64 PE) and only serve as
+# references. Results are cached in WORK_DIR, so reruns are cheap.
+# Usage: measure [--free NAME]... [--level N] IN_DIR WORK_DIR
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+level=19 frees=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--free) frees+=("$2"); shift 2;;
+		--level) level="$2"; shift 2;;
+		*) break;;
+	esac
+done
+[ $# -eq 2 ] || { echo "usage: measure [--free NAME]... [--level N] IN_DIR WORK_DIR" >&2; exit 2; }
+in="$1" work="$2"
+mkdir -p "$work/alone" "$work/patch" "$work/check" || exit 1
+zst=(zstd -q -f --ultra -"$level" --long=30 -T0)
+is_free() { local f; for f in "${frees[@]+"${frees[@]}"}"; do [ "$f" = "$1" ] && return 0; done; return 1; }
+fresh() { [ -s "$1" ] && [ "$1" -nt "$2" ] && { [ $# -lt 3 ] || [ "$1" -nt "$3" ]; }; }
+
+names=()
+while IFS= read -r f; do [ -f "$in/$f" ] && names+=("$f"); done < <(ls "$in")
+bytes() { wc -c < "$1" | tr -d ' '; }
+
+table="$work/costs"
+: > "$table"
+raw_total=0 gz_total=0 zalone_total=0 free_total=0
+for a in "${names[@]}"; do
+	raw_total=$((raw_total + $(bytes "$in/$a")))
+	if is_free "$a"; then
+		echo "free $a" >> "$table"
+		free_total=$((free_total + $(bytes "$in/$a")))
+		continue
+	fi
+	gz="$work/alone/$a.gz" z="$work/alone/$a.zst"
+	fresh "$gz" "$in/$a" || { gzip -9 -c "$in/$a" > "$gz.tmp" && mv -f "$gz.tmp" "$gz"; }
+	fresh "$z" "$in/$a" || { "${zst[@]}" -c "$in/$a" > "$z.tmp" && mv -f "$z.tmp" "$z"; } || exit 1
+	gz_total=$((gz_total + $(bytes "$gz")))
+	zalone_total=$((zalone_total + $(bytes "$z")))
+	echo "alone $a $(bytes "$z")" >> "$table"
+	for r in "${names[@]}"; do
+		[ "$r" = "$a" ] && continue
+		p="$work/patch/$r--$a.zst"
+		fresh "$p" "$in/$a" "$in/$r" || { "${zst[@]}" --patch-from="$in/$r" -c "$in/$a" > "$p.tmp" && mv -f "$p.tmp" "$p"; } || exit 1
+		echo "patch $r $a $(bytes "$p")" >> "$table"
+	done
+done
+
+solid="$work/solid.zst"
+cat_inputs=()
+for a in "${names[@]}"; do is_free "$a" || cat_inputs+=("$in/$a"); done
+if ! fresh "$solid" "${cat_inputs[0]}"; then cat "${cat_inputs[@]}" | "${zst[@]}" -c > "$solid.tmp" && mv -f "$solid.tmp" "$solid" || exit 1; fi
+
+plan="$(awk -f "$here/layout.awk" "$table")" || exit 1
+layout_total="$(printf '%s\n' "$plan" | awk '$1 == "total" { print $2 }')"
+
+# Decode every frame of the plan and compare with the original bytes.
+ok=0 n=0
+while read -r kind x y; do
+	case "$kind" in
+		root) n=$((n + 1)); zstd -q -d -f --long=30 -o "$work/check/$x" "$work/alone/$x.zst" && cmp -s "$work/check/$x" "$in/$x" && ok=$((ok + 1));;
+		patch) n=$((n + 1)); zstd -q -d -f --long=30 --patch-from="$in/$x" -o "$work/check/$y" "$work/patch/$x--$y.zst" && cmp -s "$work/check/$y" "$in/$y" && ok=$((ok + 1));;
+	esac
+done <<< "$plan"
+
+printf 'payloads  %s\n' "${#names[@]}"
+printf 'raw       %12d  (free raw references: %d)\n' "$raw_total" "$free_total"
+printf 'gzip-9    %12d  per payload, excluding free\n' "$gz_total"
+printf 'zstd-%-4s %12d  per payload, excluding free\n' "$level" "$zalone_total"
+printf 'solid     %12d  one zstd stream, excluding free\n' "$(bytes "$solid")"
+printf 'layout    %12d  whole frames + depth-1 deltas, excluding free\n' "$layout_total"
+printf '%s\n' "$plan" | awk '$1 != "total" { print "  " $0 }'
+printf 'verified %d/%d\n' "$ok" "$n"
+[ "$ok" -eq "$n" ]

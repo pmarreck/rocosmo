@@ -101,7 +101,7 @@ surgical linker are historical; claims made about them do not carry over.
 
 ## 5. Experiment receipts
 
-`./test` runs P1–P4 plus the packer unit tests; 54 checks passed on
+`./test` runs P1–P6 plus the packer unit tests; 94 checks passed on
 2026-10-13. Real-hardware checks need SSH aliases in the ignored
 `local/hosts.env` (`ROCOSMO_MACOS_ARM64_HOST`, `ROCOSMO_WINDOWS_X64_HOST`,
 `ROCOSMO_WSL_X64_HOST`). An unset alias fails the suite rather than skipping.
@@ -287,3 +287,106 @@ Open questions for the BDFN:
 - Is unsigned distribution acceptable, or should macOS Developer ID and
   Authenticode signing be in scope?
 - Should cache cleanup be the program's job or the user's?
+
+## 10. Study: a shared zstd runtime with delta payloads
+
+Date: 2026-10-13. The BDFN proposed a successor layout:
+- the same MZ/sh header picks the OS and CPU;
+- a small native runtime, cached once per machine, rebuilds the payload from zstd frames and runs it;
+- per CPU, one target is stored whole and the others as zstd `--patch-from` deltas against it.
+
+Large Zig, Rust and Roc binaries (validate is ~100 MB) are in scope, not only small Roc apps. Probes P5 (`probes/p5_payload_layout`) and P6 (`probes/p6_zstd_decoder`) measure the idea; `./test` covers their tools, and the large-dataset runs below are receipts, not part of `./test`.
+
+**Method.** zstd 1.5.7 at `-19 --long=30`, gzip `-9`. `measure` computes every pairwise delta, and `layout.awk` exhaustively picks the cheapest set of whole frames ("roots") so that every other payload is one delta from a root or from the Windows x64 PE, which is stored raw anyway and so is a free reference (depth 1: no delta of a delta). Every frame of the chosen plan is decoded and compared byte for byte (`verified N/N`). Measured on an AMD Threadripper 3990X running NixOS.
+
+**Datasets.**
+
+| Set | Language | Targets | Source |
+| --- | --- | --- | --- |
+| Roc compiler `nightly-2026-10-12-2664a27` | Zig + LLVM (C++) | linux x64/arm64, macOS x64/arm64 | official release tarballs, flake-pinned hashes |
+| ripgrep 14.1.1 | Rust | linux x64 (musl) / arm64 (gnu), macOS x64/arm64, Windows x64 | official GitHub release, checksums verified |
+| z7z `cc626ef` | Zig + libc | linux x64/arm64 (musl), macOS x64/arm64, Windows x64/arm64, FreeBSD x64/arm64, NetBSD x64 | cross-built here with Zig 0.16.0 `ReleaseFast`, ELF debug info stripped; OpenBSD failed (no Zig cross libc) |
+| synthetic Roc app (600 generated functions) | Roc | the six P2 targets | `probes/p5_payload_layout/gen-roc-app 600` built with the P2 platform; prints 237 for input 20 on Linux x64 |
+| P2 probe app | Roc | the six P2 targets | `probes/p2_native_targets` |
+
+**Container bytes, excluding the free raw Windows x64 PE.**
+
+| Set | Raw | gzip -9 each | zstd each | Best delta layout | Solid zstd stream |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Roc compiler (4 × ~250 MB) | 1,001,618,796 | 292,449,402 | 176,808,558 | 133,941,998 | 133,761,875 |
+| ripgrep (5) | 21,369,128 | 8,049,765 | 6,348,142 | 5,367,808 | 5,337,430 |
+| z7z (9) | 9,742,406 | 4,021,959 | 3,252,821 | 2,010,381 | 1,952,862 |
+| synthetic Roc app (6) | 2,385,352 | 521,202 | 367,933 | 253,067 | 254,020 |
+| P2 probe app (6) | 96,016 | 10,654 | 9,840 | 7,893 | 7,249 |
+
+**Delta patterns.** Values are delta size as a share of that target's whole zstd frame.
+- **z7z (Zig): same CPU, Unix ELF to ELF.** Deltas are small: FreeBSD→NetBSD 17%, Linux→FreeBSD 27%, arm64 Linux→FreeBSD 27%.
+- **z7z: macOS and Windows on the same CPU.** Weaker: 63–87%.
+- **z7z: across CPUs.** Almost useless: 91–96%.
+- **Synthetic Roc app (Roc-generated code dominates).** Linux x64 and macOS x64 diff to 18.6% of each other: same System V calling convention, so the same machine code. Windows x64 is 93% because Windows uses a different calling convention. On arm64, Linux↔Windows is 53% and macOS 76–80%. Across CPUs, 99–100%.
+- **Roc compiler (LLVM-heavy).** Every pair lands at 57–75%. Same-CPU pairs are barely better than cross-CPU ones; the best is Linux x64→macOS x64 at 57%.
+- **ripgrep (Rust, built by different CI toolchains per OS).** 72–89%. The free Windows x64 PE was the chosen reference for all four other targets, both arm64 ones included.
+
+**Choosing roots by measurement wins.** The optimum is never "the smallest payload". For z7z it picked FreeBSD x64 and Linux arm64 as roots. A solid stream is at most 3% smaller than the depth-1 layout on the large sets (8% on the 8 KB probe), but decoding it means decompressing every earlier payload.
+
+**Branch filter (BCJ).** `bcj.c` is an exactly invertible x86 CALL/JMP and arm64 BL/ADRP filter in the style of xz's. Round trips are tested in both directions on seeded random bytes and on real binaries. Applied before zstd, it shrank the best layout by only 1.6% (z7z) and 6.2% (ripgrep). It is not worth its complexity yet.
+
+**Decoder cost per target.** Upstream libzstd decode-only, space-optimized (`HUF_FORCE_DECOMPRESS_X1`, `ZSTD_FORCE_DECOMPRESS_SEQUENCES_SHORT`, `ZSTD_NO_INLINE`, `ZSTD_STRIP_ERROR_STRINGS`, no legacy), built with `zig cc -Os`. Sizes are the executable minus an identical no-decoder baseline:
+
+| Target | linux x64 | linux arm64 | macOS x64 | macOS arm64 | Windows x64 | Windows arm64 | FreeBSD x64 | NetBSD x64 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Decoder bytes | 34,792 | 30,264 | 38,139 | 37,360 | 33,792 | 27,648 | 35,208 | 35,208 |
+
+- **Correctness.** It applies CLI-made `--patch-from` deltas through `ZSTD_DCtx_refPrefix`, and rejects a wrong reference through the frame checksum (tested in P6).
+- **The educational decoder** (`doc/educational_decoder`, `-DZDEC_NO_MESSAGE`) is 15,294 bytes on x86_64 and 13,316 on arm64 macOS. It supports raw-content references but verifies no checksum, and decoded about half as fast (44 ms vs 21 ms to rebuild the 4.4 MB macOS arm64 ripgrep from its 1.1 MB delta).
+
+**Decode time and memory (size-optimized libzstd, single thread).** Rebuilding the 250 MB macOS arm64 Roc compiler from its Linux x64 root:
+- decoding the 45 MB root frame took 650 ms and 287 MB peak;
+- applying the 31 MB delta took 875 ms and 520 MB peak (zstd CLI: 620 ms, 494 MB).
+
+A secondary target of that size therefore costs about 1.5 s and about 0.5 GB on its first run.
+
+**Platform facts (sources fetched 2026-10-13).**
+- **Running a payload from memory.**
+  - *Linux:* `memfd_create` plus `execveat`, as validate_gui's shim already does.
+  - *FreeBSD:* `memfd_create` since 13.0 ([shm_open(2)](https://man.freebsd.org/cgi/man.cgi?query=shm_open&sektion=2)) and `fexecve` since 8.0 ([fexecve(2)](https://man.freebsd.org/cgi/man.cgi?query=fexecve&sektion=2)).
+  - *NetBSD:* `memfd_create` since 11.0 ([memfd_create(2)](https://man.netbsd.org/memfd_create.2)).
+  - *Not checked:* OpenBSD in-memory execution.
+  - *Not possible:* macOS and Windows have no equivalent, so they need a cache file.
+- **OpenBSD.** Since 7.5, each system call number is pinned to registered entry sites. For static executables the kernel takes them from the binary's `openbsd.syscalls` section, and a violation raises SIGABRT ([pinsyscalls(2)](https://man.openbsd.org/pinsyscalls.2); [LWN](https://lwn.net/Articles/959562); [example](https://nullprogram.com/blog/2025/03/06/)). A libc-free runtime must emit that section itself, and OpenBSD binaries need an OpenBSD sysroot (Zig 0.16 has no OpenBSD cross libc). Untested.
+- **Base-system decompressors.** gzip ships with OpenBSD ([gzip(1)](https://man.openbsd.org/gzip.1)) and NetBSD ([gzip(1)](https://man.netbsd.org/gzip.1)). FreeBSD ships both gzip and an older zstd 1.5.2 ([bug 278099](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=278099)). Stock macOS 26.7.1 has gzip and bzip2 but not zstd or xz (checked on the test Mac).
+- **Notarizing a bare command-line Mach-O.** It works, but a ticket cannot be stapled to a standalone executable; Gatekeeper checks online instead ([Apple DTS](https://developer.apple.com/forums/thread/689337), [forum](https://developer.apple.com/forums/thread/736973)). Rebuilding a payload from a delta is byte-exact, so a payload signed before diffing keeps a valid signature.
+- **Language coverage.** The container format is indifferent to the source language: it carries finished executables. Rust's [platform support](https://doc.rust-lang.org/nightly/rustc/platform-support.html) lists all of these targets with full `std`:
+  - tier 1: aarch64 macOS, x64 and arm64 Windows (MSVC), x64 Windows (GNU);
+  - tier 2 with host tools: x64/arm64 Linux musl, x64 macOS, x64/arm64 FreeBSD, x64 NetBSD;
+  - tier 3 (not built or tested by Rust's CI): arm64 NetBSD, x64/arm64 OpenBSD.
+
+  Zig 0.16 cross-built nine of z7z's ten requested targets here; only OpenBSD failed. Roc's targets are listed in §4.
+
+**Break-even.** The runtime has not been built, so its size is an estimate: the libzstd decoder above plus I/O and exec logic, gzipped for the shell to unpack with base `gzip`. That is roughly 20–35 KB per Unix OS/CPU (the P6 test executables gzip to 22–33 KB), or about 100–150 KB for Linux and macOS on both CPUs. Container totals against gzip alone:
+
+| Set | gzip -9 each | Delta layout + ~130 KB runtimes | Saving |
+| --- | ---: | ---: | ---: |
+| P2 probe app | 10.7 KB | ~138 KB | none; gzip wins 13× |
+| synthetic Roc app | 521 KB | ~383 KB | ~27% |
+| ripgrep | 8.05 MB | ~5.50 MB | ~32% |
+| z7z | 4.02 MB | ~2.14 MB | ~47% |
+| Roc compiler | 292 MB | ~134 MB | ~54% |
+
+Break-even falls somewhere between the probe and the synthetic app, roughly 0.5–1 MB of raw payloads (estimated). The packer should build both and keep the smaller one.
+
+**Conclusions.**
+1. **The idea holds for every language tested.** Zig, Rust and Roc all benefit, and the container never needs to know which language produced a payload.
+2. **Group references by calling convention and CPU, not by OS.** Same-CPU, same-convention deltas are strong; cross-CPU deltas never pay. The Windows x64 PE is the right free reference only when the code shares its convention (ripgrep yes, Roc no). Pick roots by measurement, as `layout.awk` does.
+3. **Store the runtime gzipped so base `gzip` can unpack it**, one per Unix OS/CPU, cached once per machine under its content hash and shared by every rocosmo app. The Windows x64 PE carries the same decoder, for the ARM64 relay and for any payload it must rebuild.
+4. **Run from memory only for small payloads.** Linux, FreeBSD and NetBSD can execute from memory, but then the payload is rebuilt on every run (about 1.5 s for a 250 MB secondary). Large payloads belong in a content-addressed disk cache with self-cleaning; macOS and Windows always need the cache.
+5. **Not yet known:**
+   - OpenBSD support;
+   - the real runtime size;
+   - decode speed on slow CPUs such as a Raspberry Pi;
+   - whether a smaller, checksum-free decoder (the educational one, plus our own content hash) is worth its 2× slowdown.
+
+**Reuse.**
+- **Payload index:** mini_blar (BLIP-based, optional zstd), read by the runtime. The shell keeps fixed offsets written by the packer.
+- **Runtime pattern:** validate_gui's shim, which already does self-describing tails, memfd execution and an atomic Windows cache.
+- **Deltas:** difz uses the same zstd primitive. Its full-libzstd and BLAKE3 engine is larger than a runtime should be, so reuse its format ideas and tests rather than link it.

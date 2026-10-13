@@ -27,7 +27,7 @@ zig-out/bin/rocosmo-pack \
 
 ## Test
 
-`./test` runs the packer unit tests and probes P1–P4. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
+`./test` runs the packer unit tests and probes P1–P6. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
 
 ```sh
 ROCOSMO_MACOS_ARM64_HOST=...
