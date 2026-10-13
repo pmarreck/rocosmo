@@ -1,0 +1,11 @@
+--- !tapi-tbd
+# Minimal link stub for the macOS OS interface this host uses. dyld resolves
+# these through libSystem's re-exported system libraries at run time.
+tbd-version:     4
+targets:         [ x86_64-macos, arm64-macos ]
+install-name:    '/usr/lib/libSystem.B.dylib'
+current-version: 1351
+exports:
+  - targets:         [ x86_64-macos, arm64-macos ]
+    symbols:         [ _exit, _mmap, _write, dyld_stub_binder ]
+...

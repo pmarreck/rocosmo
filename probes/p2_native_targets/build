@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# P2 build: compile the libc-free Zig host per target, then let Roc's embedded
+# linker produce one native executable per target. Runs on any host with roc
+# and zig on PATH (e.g. via nix develop).
+# Usage: build OUTDIR
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+out="${1:?usage: build OUTDIR}"
+src="$out/src"
+rm -rf -- "$src"; mkdir -p "$src"
+cp -r -- "$here/app.roc" "$here/platform" "$src/"
+
+# roc target -> zig target triple
+targets=(
+	"x64musl x86_64-linux-none"
+	"arm64musl aarch64-linux-none"
+	"x64mac x86_64-macos.11.0-none"
+	"arm64mac aarch64-macos.11.0-none"
+	"x64win x86_64-windows-msvc"
+	"arm64win aarch64-windows-msvc"
+)
+mkdir -p "$src/platform/targets"
+cp -r -- "$here/macos-sysroot" "$src/platform/targets/"
+set -e
+for pair in "${targets[@]}"; do
+	read -r rt zt <<<"$pair"
+	dir="$src/platform/targets/$rt"; mkdir -p "$dir"
+	obj=host.o; case "$rt" in *win) obj=host.obj;; esac
+	zig build-obj -target "$zt" -O ReleaseSmall -fno-builtin -fno-stack-check -fno-stack-protector \
+		-fsingle-threaded -fstrip --name host -femit-bin="$dir/$obj" "$here/host.zig"
+	case "$rt" in
+		x64win) zig dlltool -m i386:x86-64 -d "$here/kernel32.def" -l "$dir/kernel32.lib";;
+		arm64win) zig dlltool -m arm64 -d "$here/kernel32.def" -l "$dir/kernel32.lib";;
+	esac
+	exe="$out/app-$rt"; case "$rt" in *win) exe="$exe.exe";; esac
+	roc build --target="$rt" --output="$exe" "$src/app.roc" >/dev/null
+done

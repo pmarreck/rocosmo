@@ -1,0 +1,7 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+	VirtualAlloc
+	GetStdHandle
+	WriteFile
+	ExitProcess
+	GetCommandLineA
