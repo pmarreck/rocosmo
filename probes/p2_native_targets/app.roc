@@ -1,4 +1,8 @@
-app [main!] { pf: platform "./platform/main.roc" }
+app [main!, app_id] { pf: platform "./platform/main.roc" }
+
+## Cache namespace for rocosmo (reverse-DNS, ends with ";").
+app_id : Str
+app_id = "ROCOSMO_APP_ID=dev.rocosmo.probe;"
 
 import pf.Host
 

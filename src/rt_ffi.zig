@@ -89,7 +89,7 @@ test "runtime C API rebuilds each target of a packed container" {
 		.{ .name = "linux-x86_64", .pattern = "Linux-x86_64", .arch = .x86_64, .bytes = &a, .runtime_gz = "rt1" },
 		.{ .name = "macos-x86_64", .pattern = "Darwin-x86_64", .arch = .x86_64, .bytes = &b, .runtime_gz = "rt2" },
 	};
-	const out = try pack.packZstd(gpa, pe, &ts, 19);
+	const out = try pack.packZstd(gpa, pe, &ts, 19, "dev.rocosmo.test");
 	defer gpa.free(out);
 	const script = out[0..std.mem.readInt(u32, out[0x3c..][0..4], .little)];
 	const x = try std.fmt.parseInt(usize, field(script, "\nx="), 10);

@@ -54,4 +54,4 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [ ] Run payloads from memory on Linux/FreeBSD/NetBSD for small payloads.
 - [ ] Run the FreeBSD and NetBSD runtimes on real hosts or VMs.
 - [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.
-- [ ] App-namespaced, self-cleaning cache (BDFN, 2026-10-13): `--app-id` in reverse-DNS form (e.g. `llc.mecha.validate`); payloads under `rocosmo/apps/<app-id>/<hash>`, runtimes shared under `rocosmo/runtime/<hash>`; an app deletes only its own superseded entries; macOS may use `~/Library/Caches/<app-id>`. Open: default when `--app-id` is absent.
+- [x] App-namespaced, self-cleaning cache: `--app-id`, embedded `ROCOSMO_APP_ID=<id>;` (Roc, Zig, Rust), default `local.<name>`; macOS uses ~/Library/Caches. (2026-10-13 7:20 PM EDT)

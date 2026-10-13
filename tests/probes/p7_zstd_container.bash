@@ -16,13 +16,17 @@ targets=(--linux-x86_64 "$p2_out/app-x64musl" --linux-aarch64 "$p2_out/app-arm64
 run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" "${targets[@]}" --layout zstd -v -o "$p7/app"
 assert_rc0 "pack the P2 payloads with --layout zstd"
 case "$err" in *"layout zstd:"*" bytes"*) pass "--verbose reports the chosen layout and size on stderr";; *) fail "verbose summary" "$err";; esac
+printf '%s' "$err" > "$p7/zstd.err"
 run_capture file -b "$p7/app"
 case "$out" in *PE32+*x86-64*) pass "zstd container is still a PE32+ x86-64 image";; *) fail "PE identity" "$out";; esac
 
 run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" "${targets[@]}" -v -o "$p7/auto-small"
 case "$err" in *"layout raw:"*) pass "auto keeps the raw layout when it is smaller (tiny payloads)";; *) fail "auto picks raw for tiny payloads" "$err";; esac
 big="$pack_bin"  # a 3 MB executable stands in for a large payload; it is never run here
-run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" --linux-x86_64 "$big" --macos-x86_64 "$big" -v -o "$p7/auto-big"
+# A PE whose ROCOSMO_APP_ID declaration is defused, so no input declares an id.
+perl -0777 -pe 's/ROCOSMO_APP_ID=/XOCOSMO_APP_ID=/g' "$p2_out/app-x64win.exe" > "$p7/win-noid.exe"
+run_capture "$pack_bin" --windows-x86_64 "$p7/win-noid.exe" --linux-x86_64 "$big" --macos-x86_64 "$big" -v -o "$p7/auto-big"
+printf '%s' "$err" > "$p7/auto-big.err"
 case "$err" in *"layout zstd:"*) pass "auto picks zstd when it is smaller (large payloads)";; *) fail "auto picks zstd for large payloads" "$err";; esac
 
 run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" --payload "Linux-x86_64=$p2_out/app-x64musl" --layout zstd -o "$p7/x"
@@ -31,6 +35,17 @@ run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" "${targets[@]}
 case "$rc:$err" in 2:*"--level must be 1-22"*) pass "--level outside 1-22 is refused";; *) fail "--level range" "rc=$rc $err";; esac
 run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" "${targets[@]}" --layout fancy -o "$p7/x"
 case "$rc:$err" in 2:*"--layout must be raw, zstd or auto"*) pass "unknown --layout value is refused";; *) fail "--layout value" "rc=$rc $err";; esac
+# app id: embedded by the probe app, overridable, defaulted from the output name.
+case "$(cat "$p7/zstd.err")" in *"app id dev.rocosmo.probe (embedded)"*) pass "--verbose reports the embedded app id";; *) fail "embedded app id report" "$err";; esac
+run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" "${targets[@]}" --app-id org.example.override -v -o "$p7/x"
+case "$err" in *"app id org.example.override (option)"*) pass "--app-id overrides the embedded id";; *) fail "--app-id override" "$err";; esac
+run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" "${targets[@]}" --app-id NotValid -o "$p7/x"
+case "$rc:$err" in 2:*"--app-id must be"*) pass "an invalid --app-id is refused";; *) fail "--app-id validation" "rc=$rc $err";; esac
+case "$(cat "$p7/auto-big.err" 2>/dev/null)" in *"app id local.auto-big (default)"*) pass "without a declaration the id defaults to local.<output name>";; *) fail "default app id" "$(cat "$p7/auto-big.err" 2>/dev/null)";; esac
+printf 'x ROCOSMO_APP_ID=org.example.other; y' > "$p7/other-id"
+cat "$p2_out/app-x64mac" "$p7/other-id" > "$p7/conflict-mac"
+run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" --linux-x86_64 "$p2_out/app-x64musl" --macos-x86_64 "$p7/conflict-mac" -o "$p7/x"
+case "$rc:$err" in 1:*"conflicting"*) pass "payloads declaring different app ids are refused";; *) fail "conflicting app ids" "rc=$rc $err";; esac
 run_capture "$pack_bin" --help
 case "$out" in *--freebsd-x86_64*--layout*) pass "--help lists BSD targets and --layout";; *) fail "--help content" "$out";; esac
 
@@ -46,9 +61,9 @@ for shell in dash bash zsh busybox; do
 done
 field() { head -c 4096 "$app" | LC_ALL=C awk -F'[ =;]+' -v pat="$1" -v key="$2" 'index($0, pat ")") == 1 || index($0, pat "|") == 1 { for (i = 1; i < NF; i++) if ($i == key) { print $(i+1); exit } }'; }
 pid="$(field Linux-x86_64 i)" rid="$(field Linux-x86_64 h)"
-run_capture cmp "$p7/cache-dash/rocosmo/$pid" "$p2_out/app-x64musl"
+run_capture cmp "$p7/cache-dash/rocosmo/dev.rocosmo.probe/$pid" "$p2_out/app-x64musl"
 assert_rc0 "rebuilt linux x86_64 payload is byte-identical to the Roc output"
-run_capture cmp "$p7/cache-dash/rocosmo/$rid" "$rt_dir/linux-x86_64"
+run_capture cmp "$p7/cache-dash/rocosmo/runtime/$rid" "$rt_dir/linux-x86_64"
 assert_rc0 "unpacked runtime is byte-identical to the built linux x86_64 runtime"
 nogz="$(minimal_path "$p7/bin-nogz" uname mkdir dd chmod mv rm)"
 run_capture env -i PATH="$nogz" XDG_CACHE_HOME="$p7/cache-dash" "$(command -v dash)" "$app" 20
@@ -73,14 +88,14 @@ size=$(wc -c < "$p7/corrupt")
 for ((at = frames_start + 64; at < size; at += 128)); do printf '\377\377\377\377' | dd of="$p7/corrupt" bs=1 seek=$at conv=notrunc 2>/dev/null; done
 run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p7/cache-corrupt" "$(command -v dash)" "$p7/corrupt" 20
 case "$rc:$err" in 126:*rocosmo-runtime:*) pass "corrupt payload data fails with exit 126 and a runtime error";; *) fail "corrupt payload handling" "rc=$rc err=$err";; esac
-assert_eq "no payload is cached after a failed rebuild" "" "$(ls "$p7/cache-corrupt/rocosmo" 2>/dev/null | rg -v "^$rid$")"
+assert_eq "no payload is cached after a failed rebuild" "" "$(ls "$p7/cache-corrupt/rocosmo/dev.rocosmo.probe" 2>/dev/null)"
 
 # --- concurrent cold starts ---
 shared="$p7/cache-shared"
 for i in $(seq 32); do env -i PATH="$tools" XDG_CACHE_HOME="$shared" "$(command -v dash)" "$app" 20 >"$p7/par.$i" 2>&1 & done
 wait
 bad=0; for i in $(seq 32); do [ "$(cat "$p7/par.$i")" = 121 ] || bad=$((bad + 1)); done
-assert_eq "32 concurrent cold starts: all correct; one runtime and one payload cached" "0 2" "$bad $(ls "$shared/rocosmo" | wc -l)"
+assert_eq "32 concurrent cold starts: all correct; one runtime and one payload cached" "0 2" "$bad $(find "$shared" -type f | wc -l)"
 
 # --- real hosts ---
 for how in "./rocosmo-p7 20" "sh ./rocosmo-p7 20"; do

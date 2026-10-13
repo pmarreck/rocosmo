@@ -12,7 +12,9 @@ typedef struct {
 } rocosmo_payload;
 
 /* Returns 0 on success and stores a library-owned buffer in *out. */
-int rocosmo_pack(const uint8_t *pe, size_t pe_len, const rocosmo_payload *payloads, size_t count, uint8_t **out, size_t *out_len);
+/* app_id: cache namespace (see rocosmo_resolve_app_id). */
+int rocosmo_pack(const uint8_t *pe, size_t pe_len, const rocosmo_payload *payloads, size_t count,
+	const uint8_t *app_id, size_t app_id_len, uint8_t **out, size_t *out_len);
 void rocosmo_free(uint8_t *ptr, size_t len);
 const char *rocosmo_status_message(int status);
 
@@ -27,5 +29,14 @@ typedef struct {
 int rocosmo_target_pattern(const uint8_t *name, size_t name_len, const uint8_t **pattern, size_t *pattern_len);
 /* zstd layout: whole frames or deltas plus each target's embedded runtime.
  * level is the zstd level, 1-22. Output as for rocosmo_pack. */
-int rocosmo_pack_zstd(const uint8_t *pe, size_t pe_len, const rocosmo_target *targets, size_t count, int level, uint8_t **out, size_t *out_len);
+int rocosmo_pack_zstd(const uint8_t *pe, size_t pe_len, const rocosmo_target *targets, size_t count, int level,
+	const uint8_t *app_id, size_t app_id_len, uint8_t **out, size_t *out_len);
+
+typedef struct { const uint8_t *ptr; size_t len; } rocosmo_buffer;
+enum { ROCOSMO_APP_ID_OPTION = 0, ROCOSMO_APP_ID_EMBEDDED = 1, ROCOSMO_APP_ID_DEFAULT = 2 };
+/* Resolve the app id: option (NULL for none) > the ROCOSMO_APP_ID=<id>; every
+ * declaring payload agrees on > local.<exe_name>. *out is freed with
+ * rocosmo_free; *source is one of ROCOSMO_APP_ID_*. */
+int rocosmo_resolve_app_id(const uint8_t *option, size_t option_len, const rocosmo_buffer *payloads, size_t count,
+	const uint8_t *exe_name, size_t exe_len, uint8_t **out, size_t *out_len, int *source);
 #endif

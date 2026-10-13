@@ -12,12 +12,13 @@ pub const Payload = extern struct {
 	bytes_len: usize,
 };
 
-pub const Status = enum(c_int) { ok = 0, not_pe = 1, unsupported_pe = 2, headers_overflow = 3, invalid_pattern = 4, out_of_memory = 5, invalid_argument = 6, invalid_name = 7, too_many_targets = 8, encode_failed = 9, unknown_target = 10 };
+pub const Status = enum(c_int) { ok = 0, not_pe = 1, unsupported_pe = 2, headers_overflow = 3, invalid_pattern = 4, out_of_memory = 5, invalid_argument = 6, invalid_name = 7, too_many_targets = 8, encode_failed = 9, unknown_target = 10, invalid_app_id = 11, conflicting_app_ids = 12 };
 
 const gpa = std.heap.c_allocator;
 
 /// Build a polyglot container from a Windows PE and per-OS/arch payloads.
-export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payload, count: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
+export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payload, count: usize, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
+	const idp = id orelse return .invalid_argument;
 	const o = out orelse return .invalid_argument;
 	const ol = out_len orelse return .invalid_argument;
 	const pe_ptr = pe orelse return .invalid_argument;
@@ -28,7 +29,8 @@ export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payl
 		const src = payloads.?[i];
 		p.* = .{ .pattern = src.pattern[0..src.pattern_len], .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{} };
 	}
-	const result = pack.pack(gpa, pe_ptr[0..pe_len], list) catch |e| return switch (e) {
+	const result = pack.pack(gpa, pe_ptr[0..pe_len], list, idp[0..id_len]) catch |e| return switch (e) {
+		error.InvalidAppId => .invalid_app_id,
 		error.NotPe => .not_pe,
 		error.UnsupportedPe => .unsupported_pe,
 		error.HeadersOverflow => .headers_overflow,
@@ -59,6 +61,8 @@ export fn rocosmo_status_message(status: c_int) callconv(.c) [*:0]const u8 {
 		8 => "too many targets",
 		9 => "zstd compression failed",
 		10 => "unknown target name",
+		11 => "app id must be lowercase reverse-DNS, e.g. org.example.tool (labels of a-z, 0-9 and -)",
+		12 => "payloads declare conflicting ROCOSMO_APP_ID values",
 		else => "invalid argument",
 	};
 }
@@ -101,7 +105,8 @@ export fn rocosmo_target_pattern(name: ?[*]const u8, name_len: usize, pattern: ?
 
 /// zstd layout: targets by known name; each gets its embedded runtime.
 /// `level` is the zstd compression level (1-22).
-export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Target, count: usize, level: c_int, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
+export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Target, count: usize, level: c_int, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
+	const idp = id orelse return .invalid_argument;
 	const o = out orelse return .invalid_argument;
 	const ol = out_len orelse return .invalid_argument;
 	const pe_ptr = pe orelse return .invalid_argument;
@@ -115,7 +120,8 @@ export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Tar
 		const k = targets.find(name) orelse return .unknown_target;
 		t.* = .{ .name = k.name, .pattern = k.pattern, .arch = k.arch, .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{}, .runtime_gz = runtimeFor(k.name) };
 	}
-	const result = pack.packZstd(gpa, pe_ptr[0..pe_len], ts, level) catch |e| return switch (e) {
+	const result = pack.packZstd(gpa, pe_ptr[0..pe_len], ts, level, idp[0..id_len]) catch |e| return switch (e) {
+		error.InvalidAppId => .invalid_app_id,
 		error.NotPe => .not_pe,
 		error.UnsupportedPe => .unsupported_pe,
 		error.HeadersOverflow => .headers_overflow,
@@ -127,5 +133,33 @@ export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Tar
 	};
 	o.* = result.ptr;
 	ol.* = result.len;
+	return .ok;
+}
+
+const app_id = @import("app_id.zig");
+
+pub const Buffer = extern struct { ptr: ?[*]const u8, len: usize };
+
+/// Resolve the cache namespace: `option` (NULL for none) beats an id that
+/// every declaring payload agrees on, which beats `local.<exe_name>`.
+/// `*out` is library-owned (rocosmo_free); `*source` is 0 option,
+/// 1 embedded, 2 default.
+export fn rocosmo_resolve_app_id(option: ?[*]const u8, option_len: usize, payloads: ?[*]const Buffer, count: usize, exe_name: ?[*]const u8, exe_len: usize, out: ?*?[*]u8, out_len: ?*usize, source: ?*c_int) callconv(.c) Status {
+	const o = out orelse return .invalid_argument;
+	const ol = out_len orelse return .invalid_argument;
+	const src = source orelse return .invalid_argument;
+	const name = exe_name orelse return .invalid_argument;
+	if (count > 0 and payloads == null) return .invalid_argument;
+	const list = gpa.alloc([]const u8, count) catch return .out_of_memory;
+	defer gpa.free(list);
+	for (list, 0..) |*b, i| b.* = if (payloads.?[i].ptr) |p| p[0..payloads.?[i].len] else &.{};
+	const r = app_id.resolve(gpa, if (option) |p| p[0..option_len] else null, list, name[0..exe_len]) catch |e| return switch (e) {
+		error.InvalidAppId => .invalid_app_id,
+		error.ConflictingAppIds => .conflicting_app_ids,
+		error.OutOfMemory => .out_of_memory,
+	};
+	o.* = @constCast(r.id.ptr);
+	ol.* = r.id.len;
+	src.* = @intFromEnum(r.source);
 	return .ok;
 }

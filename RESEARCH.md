@@ -443,4 +443,20 @@ The Linux runtimes are statically linked with musl; its stdio accounts for part 
 - No FreeBSD or NetBSD host has run its runtime.
 - Windows ARM64 is still emulated.
 - Payloads are cached on disk on every OS; running them from memory on Linux and the BSDs is not built.
-- The cache is not yet namespaced per app or self-cleaning (planned: `--app-id` in reverse-DNS form).
+- *(Done since: per-app cache namespace and self-cleaning; see below.)*
+
+**App id and self-cleaning cache (built 2026-10-13).**
+- **Layout.** Payloads are cached under `<cache>/rocosmo/<app-id>/<hash>` and runtimes under `<cache>/rocosmo/runtime/<hash>`. `<cache>` is `$XDG_CACHE_HOME`, else `~/Library/Caches` on macOS, else `~/.cache`. The private TMPDIR fallback keeps the same subpaths.
+- **Resolution** (`src/app_id.zig`):
+  - `--app-id` first;
+  - else the id the payloads declare as the literal `ROCOSMO_APP_ID=<id>;` (all declaring payloads must agree);
+  - else `local.<output name>`, sanitized.
+
+  Text that starts with the marker but does not form a whole declaration is ignored. That covers the packer's own copy of the prefix, and Roc strings, which carry no NUL terminator; hence the `;`.
+- **Roc** (tested). An app that provides `app_id : Str`, exposed by the platform as `roc_app_id` and referenced by the host, carries the literal in all six P2 binaries: Linux, macOS and Windows on x64 and arm64.
+- **Self-cleaning.** After installing a payload, the dispatcher deletes that app's other finished entries (bare hashes). It never touches in-flight temp files (`hash.pid`) or other apps' folders. If a concurrent run of another version removes the fresh entry between install and `exec`, the dispatcher re-extracts once. Tests cover:
+  - version A→B→A switching;
+  - a planted foreign temp file and a foreign app folder;
+  - the default cache homes on Linux and on a real Mac.
+
+  A mutation that stops sparing temp files fails both the cleaning test and the 32-way concurrency test.

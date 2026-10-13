@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const layout = @import("layout.zig");
+const app_id = @import("app_id.zig");
 const index = @import("index.zig");
 const zenc = @import("zstd_encode.zig");
 
@@ -33,7 +34,7 @@ pub const Target = struct {
 	runtime_gz: []const u8,
 };
 
-pub const PackError = error{ NotPe, UnsupportedPe, HeadersOverflow, InvalidPattern, InvalidName, TooManyTargets, EncodeFailed, OutOfMemory };
+pub const PackError = error{ NotPe, UnsupportedPe, HeadersOverflow, InvalidPattern, InvalidName, InvalidAppId, TooManyTargets, EncodeFailed, OutOfMemory };
 
 /// Patterns become literal shell `case` alternatives, so only a conservative
 /// alphabet is allowed: no globbing, quoting, whitespace or command syntax.
@@ -58,51 +59,69 @@ const dos_prefix = "MZqFpD='";
 const script_start =
 	"'\n" ++
 	"s=$(command -v \"$0\")||s=$0\n" ++
-	"c=${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/rocosmo\n";
+	// Cache home: $XDG_CACHE_HOME, else ~/Library/Caches on macOS, else ~/.cache.
+	"c=${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/rocosmo\n" ++
+	"[ -n \"$XDG_CACHE_HOME\" ]||[ \"$(uname -s)\" != Darwin ]||c=${HOME:-/tmp}/Library/Caches/rocosmo\n";
 const case_start = "case $(uname -s)-$(uname -m) in\n";
-const script_head = script_start ++ case_start;
 const case_end =
 	"*) echo \"$0: no payload for $(uname -s)-$(uname -m)\" >&2;exit 127;;\n" ++
 	"esac\n";
+/// Payloads live in $c/<app id>/<hash>; $d is this app's folder.
 const cache_dir =
-	"f=$c/$i\n" ++
+	"d=$c/$a f=$c/$a/$i\n" ++
 	"if [ ! -x \"$f\" ];then\n" ++
 	// Unwritable cache home: use a private per-user TMPDIR directory, verified
 	// (not a symlink, owned by us) before anything in it is trusted or run.
-	"if ! mkdir -p \"$c\" 2>/dev/null;then\n" ++
-	"c=${TMPDIR:-/tmp}/rocosmo-$(id -u) f=$c/$i\n" ++
+	"if ! mkdir -p \"$d\" 2>/dev/null;then\n" ++
+	"c=${TMPDIR:-/tmp}/rocosmo-$(id -u);d=$c/$a f=$c/$a/$i\n" ++
 	"mkdir -m 700 \"$c\" 2>/dev/null\n" ++
-	"[ -d \"$c\" ]&&[ ! -L \"$c\" ]&&[ -O \"$c\" ]||{ echo \"$0: no private writable cache directory\" >&2;exit 126;}\n" ++
+	"[ -d \"$c\" ]&&[ ! -L \"$c\" ]&&[ -O \"$c\" ]&&mkdir -p \"$d\"||{ echo \"$0: no private writable cache directory\" >&2;exit 126;}\n" ++
 	"fi\n" ++
 	"fi\n";
 // BSD dd treats count=0 as "until EOF", so never call dd with a zero count.
 // Copies bytes [o, o+n) of the container to stdout.
 const dd_range = "{ { [ $b = 0 ]||dd if=\"$s\" bs=4096 skip=$((o/4096)) count=$b;}&&{ [ $r = 0 ]||dd if=\"$s\" bs=1 skip=$((o+b*4096)) count=$r;};} 2>/dev/null";
+/// Self-cleaning: after installing this payload, remove the app's other
+/// finished entries (bare hashes). In-flight temp files (hash.pid) are left
+/// alone, and other apps' folders are never touched.
+const cleanup = "for e in \"$d\"/*;do case ${e##*/} in $i|*.*);;*)rm -f \"$e\";;esac;done\n";
+/// z extracts on a miss. A concurrent run of another version of the same app
+/// may clean our entry between install and exec, so check once more.
 const exec_tail =
+	"[ -x \"$f\" ]||z\n" ++
+	"[ -x \"$f\" ]||z\n" ++
 	"exec \"$f\" \"$@\"\n" ++
 	"exit 127\n";
 const script_tail = case_end ++ cache_dir ++
-	"if [ ! -x \"$f\" ];then\n" ++
-	"t=$f.$$ b=$((n/4096)) r=$((n%4096))\n" ++
+	"z(){ t=$f.$$ b=$((n/4096)) r=$((n%4096))\n" ++
 	dd_range ++ " >\"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++
-	"fi\n" ++ exec_tail;
-/// zstd layout: o/n locate this OS/CPU's gzipped runtime (cached as $c/$h);
-/// the runtime reads the index at x/y and writes target $p to a temp file.
+	cleanup ++ "}\n" ++ exec_tail;
+/// zstd layout: o/n locate this OS/CPU's gzipped runtime, cached once per
+/// machine as $c/runtime/$h and shared by all apps; it reads the index at
+/// x/y and writes target $p to a temp file.
 const script_tail_zstd = case_end ++ cache_dir ++
-	"if [ ! -x \"$f\" ];then\n" ++
-	"g=$c/$h\n" ++
+	"z(){ g=$c/runtime/$h\n" ++
 	"if [ ! -x \"$g\" ];then\n" ++
-	"u=$g.$$ b=$((n/4096)) r=$((n%4096))\n" ++
+	"mkdir -p \"$c/runtime\";u=$g.$$ b=$((n/4096)) r=$((n%4096))\n" ++
 	dd_range ++ "|gzip -dc >\"$u\"&&chmod 755 \"$u\"&&mv -f \"$u\" \"$g\"||{ rm -f \"$u\";echo \"$0: cannot unpack runtime\" >&2;exit 126;}\n" ++
 	"fi\n" ++
 	"t=$f.$$\n" ++
 	"\"$g\" \"$s\" $x $y $p \"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++
-	"fi\n" ++ exec_tail;
+	cleanup ++ "}\n" ++ exec_tail;
 
 fn shortHash(bytes: []const u8) [16]u8 {
 	var digest: [32]u8 = undefined;
 	std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
 	return std.fmt.bytesToHex(digest[0..8], .lower);
+}
+
+/// DOS prefix, cache-home logic and the app id (validated: safe as shell text).
+fn writeStart(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8) !void {
+	try writeDosPrefix(list, gpa);
+	try list.appendSlice(gpa, script_start);
+	try list.appendSlice(gpa, "a=");
+	try list.appendSlice(gpa, id);
+	try list.append(gpa, '\n');
 }
 
 fn writeDosPrefix(list: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
@@ -115,9 +134,9 @@ fn writeDosPrefix(list: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
 /// Builds the shell dispatcher that sits in the DOS stub area. Numbers are
 /// right-padded to a fixed width so the script length does not depend on them
 /// (leading zeros would be octal in shell arithmetic).
-fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, payloads: []const Payload, offsets: []const usize) !void {
-	try writeDosPrefix(list, gpa);
-	try list.appendSlice(gpa, script_head);
+fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8, payloads: []const Payload, offsets: []const usize) !void {
+	try writeStart(list, gpa, id);
+	try list.appendSlice(gpa, case_start);
 	for (payloads, offsets) |p, off| {
 		try list.appendSlice(gpa, p.pattern);
 		try list.appendSlice(gpa, ") i=");
@@ -129,9 +148,8 @@ fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, payloads: []con
 	try list.appendSlice(gpa, script_tail);
 }
 
-fn writeScriptZstd(list: *std.ArrayList(u8), gpa: std.mem.Allocator, targets: []const Target, rt_offsets: []const usize, idx_off: usize, idx_len: usize) !void {
-	try writeDosPrefix(list, gpa);
-	try list.appendSlice(gpa, script_start);
+fn writeScriptZstd(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8, targets: []const Target, rt_offsets: []const usize, idx_off: usize, idx_len: usize) !void {
+	try writeStart(list, gpa, id);
 	try appendPadded(list, gpa, "x=", idx_off);
 	try appendPadded(list, gpa, " y=", idx_len);
 	try list.append(gpa, '\n');
@@ -249,8 +267,9 @@ fn writeFront(out: []u8, pe: []const u8, info: PeInfo, script: []const u8, h: He
 }
 
 /// Raw layout: [script+relocated PE headers][PE body shifted][aligned payloads].
-pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload) PackError![]u8 {
+pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload, id: []const u8) PackError![]u8 {
 	const info = try parsePe(pe);
+	if (!app_id.valid(id)) return error.InvalidAppId;
 	for (payloads) |p| if (!validPattern(p.pattern)) return error.InvalidPattern;
 	const offsets = try gpa.alloc(usize, payloads.len);
 	defer gpa.free(offsets);
@@ -258,7 +277,7 @@ pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload) P
 
 	var probe: std.ArrayList(u8) = .empty;
 	defer probe.deinit(gpa);
-	try writeScript(&probe, gpa, payloads, offsets);
+	try writeScript(&probe, gpa, id, payloads, offsets);
 	const h = try headerLayout(info, pe.len, probe.items.len);
 
 	var cursor = alignUp(h.body_end, payload_align);
@@ -270,7 +289,7 @@ pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload) P
 
 	var script: std.ArrayList(u8) = .empty;
 	defer script.deinit(gpa);
-	try writeScript(&script, gpa, payloads, offsets);
+	try writeScript(&script, gpa, id, payloads, offsets);
 	std.debug.assert(script.items.len == probe.items.len);
 
 	const out = try gpa.alloc(u8, total);
@@ -286,8 +305,9 @@ pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload) P
 /// are not tried because they measured 91-100% of a whole frame (RESEARCH.md
 /// section 10). layout.optimal then picks roots and references exhaustively.
 /// Output: [script][PE][runtimes][index][frames], blobs 4 KiB aligned.
-pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target, level: i32) PackError![]u8 {
+pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target, level: i32, id: []const u8) PackError![]u8 {
 	const info = try parsePe(pe);
+	if (!app_id.valid(id)) return error.InvalidAppId;
 	for (targets) |t| {
 		if (!validPattern(t.pattern)) return error.InvalidPattern;
 		if (!index.validName(t.name) or std.mem.eql(u8, t.name, pe_body_name)) return error.InvalidName;
@@ -347,7 +367,7 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target,
 	@memset(rt_offsets, 0);
 	var probe: std.ArrayList(u8) = .empty;
 	defer probe.deinit(gpa);
-	try writeScriptZstd(&probe, gpa, targets, rt_offsets, 0, idx_len);
+	try writeScriptZstd(&probe, gpa, id, targets, rt_offsets, 0, idx_len);
 	const h = try headerLayout(info, pe.len, probe.items.len);
 
 	var cursor = alignUp(h.body_end, payload_align);
@@ -372,7 +392,7 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target,
 	std.debug.assert(idx.len == idx_len);
 	var script: std.ArrayList(u8) = .empty;
 	defer script.deinit(gpa);
-	try writeScriptZstd(&script, gpa, targets, rt_offsets, idx_off, idx_len);
+	try writeScriptZstd(&script, gpa, id, targets, rt_offsets, idx_off, idx_len);
 	std.debug.assert(script.items.len == probe.items.len);
 
 	const out = try gpa.alloc(u8, total);
@@ -439,6 +459,7 @@ fn relocateDebugDirectory(out: []u8, sec: usize, nsec: usize, rva: usize, size: 
 // must reappear byte-for-byte where the output's own headers and script say.
 
 const testing = std.testing;
+const test_id = "dev.rocosmo.test";
 
 /// Shared with other modules' tests.
 pub const testPe = fakePe;
@@ -490,7 +511,7 @@ test "output starts as both an MZ header and a shell assignment" {
 	const gpa = testing.allocator;
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
-	const out = try pack(gpa, pe, &.{});
+	const out = try pack(gpa, pe, &.{}, test_id);
 	defer gpa.free(out);
 	try testing.expectEqualStrings("MZqFpD='", out[0..8]);
 }
@@ -499,7 +520,7 @@ test "e_lfanew locates a PE header whose sections hold the original bytes" {
 	const gpa = testing.allocator;
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
-	const out = try pack(gpa, pe, &.{});
+	const out = try pack(gpa, pe, &.{}, test_id);
 	defer gpa.free(out);
 	const lfanew = rd32(out, 0x3c);
 	try testing.expectEqualStrings("PE\x00\x00", out[lfanew..][0..4]);
@@ -527,7 +548,7 @@ test "shell text before the PE header contains no stray single quote" {
 	const gpa = testing.allocator;
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
-	const out = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "abc" }});
+	const out = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "abc" }}, test_id);
 	defer gpa.free(out);
 	const lfanew = rd32(out, 0x3c);
 	// Exactly two quotes delimit the swallowed DOS header: offsets 7 and 0x40.
@@ -564,7 +585,7 @@ test "every payload is stored byte-for-byte at the offset its script line names"
 		.{ .pattern = "Darwin-arm64", .bytes = "tiny" },
 		.{ .pattern = "Linux-aarch64|Linux-arm64", .bytes = "" },
 	};
-	const out = try pack(gpa, pe, &payloads);
+	const out = try pack(gpa, pe, &payloads, test_id);
 	defer gpa.free(out);
 	for (payloads) |p| {
 		const e = scriptEntry(out, p.pattern) orelse return error.TestMissingEntry;
@@ -578,11 +599,11 @@ test "identical payload bytes get identical cache identities; different bytes di
 	const gpa = testing.allocator;
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
-	const a = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "one" }});
+	const a = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "one" }}, test_id);
 	defer gpa.free(a);
-	const b = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "one" }});
+	const b = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "one" }}, test_id);
 	defer gpa.free(b);
-	const c = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "two" }});
+	const c = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "two" }}, test_id);
 	defer gpa.free(c);
 	try testing.expectEqualSlices(u8, a, b);
 	const ia = std.mem.indexOf(u8, a, "i=").?;
@@ -592,11 +613,11 @@ test "identical payload bytes get identical cache identities; different bytes di
 
 test "rejects non-PE input and PE32 (non-plus) images" {
 	const gpa = testing.allocator;
-	try testing.expectError(error.NotPe, pack(gpa, "not a pe at all, definitely not", &.{}));
+	try testing.expectError(error.NotPe, pack(gpa, "not a pe at all, definitely not", &.{}, test_id));
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
 	std.mem.writeInt(u16, pe[0x80 + 24 ..][0..2], 0x10b, .little);
-	try testing.expectError(error.UnsupportedPe, pack(gpa, pe, &.{}));
+	try testing.expectError(error.UnsupportedPe, pack(gpa, pe, &.{}, test_id));
 }
 
 test "fails rather than overlapping headers with the first section" {
@@ -605,7 +626,7 @@ test "fails rather than overlapping headers with the first section" {
 	defer gpa.free(pe);
 	var many: [200]Payload = undefined;
 	for (&many) |*p| p.* = .{ .pattern = "Some-Very-Long-Pattern-To-Bloat-The-Script", .bytes = "x" };
-	try testing.expectError(error.HeadersOverflow, pack(gpa, pe, &many));
+	try testing.expectError(error.HeadersOverflow, pack(gpa, pe, &many, test_id));
 }
 
 test "pattern validation classifies a set of candidate patterns" {
@@ -616,7 +637,7 @@ test "pattern validation classifies a set of candidate patterns" {
 	const gpa = testing.allocator;
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
-	try testing.expectError(error.InvalidPattern, pack(gpa, pe, &.{.{ .pattern = "x) rm -rf ~;;", .bytes = "" }}));
+	try testing.expectError(error.InvalidPattern, pack(gpa, pe, &.{.{ .pattern = "x) rm -rf ~;;", .bytes = "" }}, test_id));
 }
 
 // ---------------------------------------------------------------------------
@@ -720,7 +741,7 @@ test "zstd layout: every target rebuilds byte-exact from the script, index and f
 	const z = try ZTest.init(gpa);
 	defer z.deinit(gpa);
 	const ts = z.targets();
-	const out = try packZstd(gpa, pe, &ts, 19);
+	const out = try packZstd(gpa, pe, &ts, 19, test_id);
 	defer gpa.free(out);
 	try testing.expectEqualStrings("MZqFpD='", out[0..8]);
 	for (ts) |t| {
@@ -747,7 +768,7 @@ test "zstd layout: a near-identical same-CPU target becomes a delta; CPUs never 
 	const z = try ZTest.init(gpa);
 	defer z.deinit(gpa);
 	const ts = z.targets();
-	const out = try packZstd(gpa, pe, &ts, 19);
+	const out = try packZstd(gpa, pe, &ts, 19, test_id);
 	defer gpa.free(out);
 	const entries = try index.decode(gpa, out[scriptGlobal(out, "x").?..][0..scriptGlobal(out, "y").?], out.len);
 	defer gpa.free(entries);
@@ -769,9 +790,9 @@ test "zstd layout keeps the PE sections intact and is deterministic" {
 	const z = try ZTest.init(gpa);
 	defer z.deinit(gpa);
 	const ts = z.targets();
-	const a = try packZstd(gpa, pe, &ts, 19);
+	const a = try packZstd(gpa, pe, &ts, 19, test_id);
 	defer gpa.free(a);
-	const b = try packZstd(gpa, pe, &ts, 19);
+	const b = try packZstd(gpa, pe, &ts, 19, test_id);
 	defer gpa.free(b);
 	try testing.expectEqualSlices(u8, a, b);
 	const lfanew = rd32(a, 0x3c);
@@ -789,6 +810,19 @@ test "zstd layout rejects bad target names and patterns" {
 	const gpa = testing.allocator;
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
-	try testing.expectError(error.InvalidPattern, packZstd(gpa, pe, &.{.{ .name = "linux-x86_64", .pattern = "a;b", .arch = .x86_64, .bytes = "x", .runtime_gz = "r" }}, 3));
-	try testing.expectError(error.InvalidName, packZstd(gpa, pe, &.{.{ .name = "a b", .pattern = "Linux-x86_64", .arch = .x86_64, .bytes = "x", .runtime_gz = "r" }}, 3));
+	try testing.expectError(error.InvalidPattern, packZstd(gpa, pe, &.{.{ .name = "linux-x86_64", .pattern = "a;b", .arch = .x86_64, .bytes = "x", .runtime_gz = "r" }}, 3, test_id));
+	try testing.expectError(error.InvalidName, packZstd(gpa, pe, &.{.{ .name = "a b", .pattern = "Linux-x86_64", .arch = .x86_64, .bytes = "x", .runtime_gz = "r" }}, 3, test_id));
+}
+
+test "the script names the app id, and an invalid id is refused before packing" {
+	const gpa = testing.allocator;
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const out = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "abc" }}, "llc.mecha.validate");
+	defer gpa.free(out);
+	try testing.expect(std.mem.indexOf(u8, out[0..rd32(out, 0x3c)], "\na=llc.mecha.validate\n") != null);
+	for ([_][]const u8{ "", "app", "a.b;x", "A.B", "a b.c", "a.b$(id)" }) |bad| {
+		try testing.expectError(error.InvalidAppId, pack(gpa, pe, &.{}, bad));
+		try testing.expectError(error.InvalidAppId, packZstd(gpa, pe, &.{}, 3, bad));
+	}
 }

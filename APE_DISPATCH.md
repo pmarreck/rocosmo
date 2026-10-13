@@ -127,10 +127,14 @@ Changed:
 - **Payloads are complete native executables:** static ELF for Linux, ad-hoc
   signed Mach-O for macOS, PE for Windows. No loader, no `cc`, no `gzip`, no
   libc.
-- **Cache.** The cache is content-addressed. Its name is the first 64 bits of
-  the payload's SHA-256, under `${XDG_CACHE_HOME:-$HOME/.cache}/rocosmo`. A new
-  build never reuses a stale extraction, and concurrent first runs race safely
-  through per-process temp names and an atomic rename.
+- **Cache.** The cache is content-addressed and namespaced per app:
+  `<cache>/rocosmo/<app-id>/<first 64 bits of SHA-256>`, with `<cache>` being
+  `$XDG_CACHE_HOME`, else `~/Library/Caches` on macOS, else `~/.cache`. A new
+  build never reuses a stale extraction; installing it removes that app's older
+  entries (never in-flight temp files or other apps). Concurrent first runs race
+  safely through per-process temp names and an atomic rename, and a run
+  re-extracts once if another version of the same app cleaned its entry
+  between install and exec.
 
 Added:
 

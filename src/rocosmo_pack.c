@@ -35,6 +35,9 @@ static void usage(FILE *f) {
 		"                          zstd: zstd frames and same-CPU deltas, rebuilt by a\n"
 		"                          small per-OS/CPU runtime; auto (default): the smaller\n"
 		"  --level N               zstd level, 1-22 (default %d)\n"
+		"  --app-id ID             cache namespace, lowercase reverse-DNS (org.example.tool);\n"
+		"                          default: the id the payloads embed as\n"
+		"                          ROCOSMO_APP_ID=<id>; else local.<output name>\n"
 		"  -o, /o OUT              output path; '-' or @stdout for standard output\n"
 		"  -v, --verbose           report the chosen layout and size on stderr\n"
 		"  -h, --help              show this help\n"
@@ -79,6 +82,7 @@ static int write_out(const char *path, const uint8_t *data, size_t len) {
 
 int main(int argc, char **argv) {
 	const char *pe_path = NULL, *out_path = NULL;
+	const char *app_id_opt = NULL;
 	/* Known targets carry a name (zstd-capable); --payload entries only a pattern. */
 	const char *names[MAX_PAYLOADS], *patterns[MAX_PAYLOADS], *paths[MAX_PAYLOADS];
 	size_t pattern_lens[MAX_PAYLOADS];
@@ -101,6 +105,7 @@ int main(int argc, char **argv) {
 			else { fprintf(stderr, "rocosmo-pack: --layout must be raw, zstd or auto\n"); return 2; }
 			continue;
 		}
+		if (!strcmp(a, "--app-id")) { app_id_opt = v; continue; }
 		if (!strcmp(a, "--level")) {
 			char *end;
 			long l = strtol(v, &end, 10);
@@ -161,14 +166,30 @@ int main(int argc, char **argv) {
 		if (names[k]) targets[k] = (rocosmo_target){ (const uint8_t *)names[k], strlen(names[k]), b, n };
 	}
 
+	/* Cache namespace: --app-id, else what the payloads declare, else local.<output name>. */
+	rocosmo_buffer bufs[MAX_PAYLOADS + 1];
+	bufs[0] = (rocosmo_buffer){ pe, pe_len };
+	for (size_t k = 0; k < count; k++) bufs[k + 1] = (rocosmo_buffer){ payloads[k].bytes, payloads[k].bytes_len };
+	const char *base = strrchr(out_path, '/');
+	base = base ? base + 1 : out_path;
+	if (!strcmp(out_path, "-") || !strcmp(out_path, "@stdout")) base = "app";
+	uint8_t *id = NULL;
+	size_t id_len = 0;
+	int id_source = 0;
+	int ist = rocosmo_resolve_app_id((const uint8_t *)app_id_opt, app_id_opt ? strlen(app_id_opt) : 0, bufs, count + 1, (const uint8_t *)base, strlen(base), &id, &id_len, &id_source);
+	if (ist) {
+		fprintf(stderr, "rocosmo-pack: %s%s\n", app_id_opt ? "--app-id must be valid: " : "", rocosmo_status_message(ist));
+		return app_id_opt ? 2 : 1;
+	}
+
 	uint8_t *raw = NULL, *zst = NULL;
 	size_t raw_len = 0, zst_len = 0;
 	int st;
-	if (layout != LAYOUT_ZSTD && (st = rocosmo_pack(pe, pe_len, payloads, count, &raw, &raw_len))) {
+	if (layout != LAYOUT_ZSTD && (st = rocosmo_pack(pe, pe_len, payloads, count, id, id_len, &raw, &raw_len))) {
 		fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
 		return 1;
 	}
-	if (layout != LAYOUT_RAW && (st = rocosmo_pack_zstd(pe, pe_len, targets, count, level, &zst, &zst_len))) {
+	if (layout != LAYOUT_RAW && (st = rocosmo_pack_zstd(pe, pe_len, targets, count, level, id, id_len, &zst, &zst_len))) {
 		fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
 		return 1;
 	}
@@ -181,6 +202,11 @@ int main(int argc, char **argv) {
 		if (layout == LAYOUT_AUTO) fprintf(stderr, " (%s would be %zu)", use_zstd ? "raw" : "zstd", use_zstd ? raw_len : zst_len);
 		fprintf(stderr, "\n");
 	}
+	if (verbose) {
+		static const char *sources[] = { "option", "embedded", "default" };
+		fprintf(stderr, "rocosmo-pack: app id %.*s (%s)\n", (int)id_len, (const char *)id, sources[id_source]);
+	}
+	rocosmo_free(id, id_len);
 	if (raw) rocosmo_free(raw, raw_len);
 	if (zst) rocosmo_free(zst, zst_len);
 	return 0;

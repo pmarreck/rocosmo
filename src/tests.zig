@@ -7,4 +7,5 @@ test {
 	_ = @import("index.zig");
 	_ = @import("targets.zig");
 	_ = @import("rt_ffi.zig");
+	_ = @import("app_id.zig");
 }

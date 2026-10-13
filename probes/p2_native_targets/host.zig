@@ -154,6 +154,9 @@ comptime {
 }
 
 extern fn roc_main(n: i64) callconv(.c) i64;
+/// The app-declared identity (rocosmo cache namespace). The host never calls
+/// it; referencing it keeps the app's `ROCOSMO_APP_ID=...;` literal linked in.
+extern fn roc_app_id() callconv(.c) void;
 
 // ---------------------------------------------------------------------------
 // Program logic shared by every entry point.
@@ -190,6 +193,7 @@ fn printI64(v: i64) void {
 }
 
 fn run(arg: ?[]const u8) noreturn {
+	std.mem.doNotOptimizeAway(&roc_app_id);
 	printI64(roc_main(if (arg) |a| parseI64(a) else 20));
 	osExit(0);
 }

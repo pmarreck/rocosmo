@@ -63,8 +63,8 @@ wsl_both_ways() { # label local_file remote_name cached_entries
 	local host="${ROCOSMO_WSL_X64_HOST-}" label="$1" file="$2" name="$3" entries="$4"
 	if [ -z "$host" ]; then fail "WSL2 runs ($label)" "ROCOSMO_WSL_X64_HOST not set"; return; fi
 	scp -q "${SSH_OPTS[@]}" "$file" "$host:$name"
-	run_capture ssh "${SSH_OPTS[@]}" "$host" "c=/tmp/rocosmo-wsl-\$\$; XDG_CACHE_HOME=\$c sh ./$name 20; echo entries=\$(ls \$c/rocosmo 2>/dev/null | wc -l)"
+	run_capture ssh "${SSH_OPTS[@]}" "$host" "c=/tmp/rocosmo-wsl-\$\$; XDG_CACHE_HOME=\$c sh ./$name 20; echo entries=\$(find \$c -type f 2>/dev/null | wc -l)"
 	assert_eq "WSL2 linux x86_64 via sh ($label): Linux path, payload cached" "121 entries=$entries" "$(printf '%s' "$out" | tr '\n' ' ' | sed 's/ $//')"
-	run_capture ssh "${SSH_OPTS[@]}" "$host" "c=/tmp/rocosmo-wsl-\$\$; XDG_CACHE_HOME=\$c ./$name 20; echo entries=\$(ls \$c/rocosmo 2>/dev/null | wc -l)"
+	run_capture ssh "${SSH_OPTS[@]}" "$host" "c=/tmp/rocosmo-wsl-\$\$; XDG_CACHE_HOME=\$c ./$name 20; echo entries=\$(find \$c -type f 2>/dev/null | wc -l)"
 	assert_eq "WSL2 direct ./ exec ($label): WSLInterop runs the Windows PE, no Linux cache" "121 entries=0" "$(printf '%s' "$out" | tr -d '\r' | tr '\n' ' ' | sed 's/ $//')"
 }
