@@ -40,3 +40,12 @@
 - [ ] Payload compression. Measured on the probe app: gzip -9 lands within 4-13% of zstd -19 and xz -9, and stock macOS 26.7.1 ships gzip and bzip2 but not zstd or xz. Proposed: gzip now; zstd only with an embedded decoder. Awaiting a decision.
 - [ ] Optional Apple Developer ID signing of the macOS payloads, run on a macOS build host; the ad-hoc signature stays the default.
 - [ ] Self-cleaning cache: the dispatcher removes this app's superseded extractions. Layout and race handling are awaiting a decision.
+
+## zstd runtime design study (BDFN, 2026-10-13 4:10 PM EDT)
+
+Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a small shared native runtime, cached once per machine. The runtime rebuilds the payload from zstd frames, where secondary targets are zstd `--patch-from` deltas against a reference, and then executes it. Large multi-language apps (100 MB-class Zig/Rust/Roc binaries) are in view, not only small Roc apps.
+
+- [ ] Measure gzip vs solid zstd vs packer-chosen delta layouts, decoder cost included, on a realistically sized Roc app and on real large Zig/Rust multi-target binaries.
+- [ ] Decode-only zstd: size per target and support for raw-content (`--patch-from`) dictionaries.
+- [ ] Research: OpenBSD syscall pinning vs a libc-free runtime; in-memory exec on Linux/BSD; base-system gzip on BSDs; notarizing bare Mach-O executables; Rust/Zig target coverage for every OS/arch pair.
+- [ ] Write findings and a recommendation into RESEARCH.md.
