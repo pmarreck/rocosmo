@@ -77,7 +77,9 @@
 						pkgs.binutils
 						pkgs.llvmPackages.bintools-unwrapped
 						pkgs.jq
-					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu ];
+						pkgs.dash
+						pkgs.zsh
+					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu pkgs.busybox ];
 				};
 			});
 

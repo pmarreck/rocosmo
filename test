@@ -11,10 +11,11 @@ export ROOT SCRATCH
 
 source "$ROOT/tests/lib.bash"
 [ -f "$ROOT/local/hosts.env" ] && source "$ROOT/local/hosts.env"
-for suite in "$ROOT"/tests/probes/*.bash; do
+for suite in "$ROOT/tests/unit.bash" "$ROOT"/tests/probes/*.bash; do
 	source "$suite"
 done
 
+[ "$FAIL_COUNT" -eq 0 ] || printf 'Failures:%b\n' "$FAILED_LABELS"
 printf '\n%d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then rm -rf -- "$SCRATCH"; else echo "scratch kept: $SCRATCH"; fi
 [ "$FAIL_COUNT" -eq 0 ]

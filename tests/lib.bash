@@ -4,8 +4,16 @@
 PASS_COUNT=${PASS_COUNT:-0}
 FAIL_COUNT=${FAIL_COUNT:-0}
 
+FAILED_LABELS=${FAILED_LABELS:-}
+
 pass() { PASS_COUNT=$((PASS_COUNT + 1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); printf '  \033[31m✗\033[0m %s\n' "$1"; [ -n "${2-}" ] && printf '      %s\n' "$2"; }
+fail() {
+	FAIL_COUNT=$((FAIL_COUNT + 1))
+	FAILED_LABELS="$FAILED_LABELS\n  ✗ $1: ${2-}"
+	printf '  \033[31m✗\033[0m %s\n' "$1"
+	[ -n "${2-}" ] && printf '      %s\n' "$2"
+	return 0
+}
 
 # Run a command, capturing stdout into $out, stderr into $err and status into $rc.
 run_capture() {
