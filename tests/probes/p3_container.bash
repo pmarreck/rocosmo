@@ -83,16 +83,8 @@ wait
 bad=0; for i in $(seq 32); do [ "$(cat "$p3/par.$i")" = 121 ] || bad=$((bad + 1)); done
 assert_eq "32 concurrent cold starts: all correct, one cache entry" "0 1" "$bad $(ls "$shared/rocosmo" | wc -l)"
 
-# The same file inside WSL2 on the Windows host: a real Linux x86_64 kernel in a
-# Hyper-V VM. Native CPU execution, but a Linux result, not a Windows one.
-host="${ROCOSMO_WSL_X64_HOST-}"
-if [ -n "$host" ]; then
-	scp -q "${SSH_OPTS[@]}" "$app" "$host:rocosmo-p3wsl"
-	run_capture ssh "${SSH_OPTS[@]}" "$host" 'XDG_CACHE_HOME="/tmp/rocosmo-p3-cache-$$" ./rocosmo-p3wsl 20'
-	assert_eq "WSL2 linux x86_64 on the Windows host (same file, direct ./ exec)" "121" "$out"
-else
-	fail "WSL2 linux x86_64 run" "ROCOSMO_WSL_X64_HOST not set"
-fi
+# The same file inside WSL2 on the Windows host (real Linux kernel in a VM).
+wsl_both_ways "raw layout" "$app" rocosmo-p3wsl 1
 
 # macOS x86_64 branch under Rosetta 2 on Apple Silicon: EMULATION evidence only.
 host="${ROCOSMO_MACOS_ARM64_HOST-}"

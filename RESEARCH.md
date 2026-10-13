@@ -58,7 +58,7 @@ fetches the official zip so macOS hosts get the same toolchain.
   and allocation; distinct from a compiler target.
 - **Native:** the CPU executes the payload's own instructions under that OS.
 - **Emulated:** qemu-user, Rosetta 2 or Prism translates the instructions.
-- **WSL2:** a real Linux kernel in a VM on Windows; counted as a Linux result.
+- **WSL2:** a real Linux kernel in a VM on Windows. WSL registers a binfmt_misc handler (`WSLInterop`, magic `MZ` at offset 0), so running the file directly inside WSL starts the *Windows* PE through interop; only `sh ./app` takes the Linux path. Tests check both and tell them apart by whether the Linux cache was used.
 
 The current compiler is the Zig-based rewrite. The Rust compiler and its
 surgical linker are historical; claims made about them do not carry over.
@@ -101,7 +101,7 @@ surgical linker are historical; claims made about them do not carry over.
 
 ## 5. Experiment receipts
 
-`./test` runs P1–P6 plus the packer unit tests; 94 checks passed on
+`./test` runs P1–P7 plus the core unit tests; 125 checks passed on
 2026-10-13. Real-hardware checks need SSH aliases in the ignored
 `local/hosts.env` (`ROCOSMO_MACOS_ARM64_HOST`, `ROCOSMO_WINDOWS_X64_HOST`,
 `ROCOSMO_WSL_X64_HOST`). An unset alias fails the suite rather than skipping.
@@ -167,7 +167,7 @@ Linux/macOS payloads. APE_DISPATCH.md describes the layout. Tested:
 - macOS x86_64 branch under Rosetta 2 (emulated); the x86_64 Mach-O was
   selected.
 - Windows x86_64 real host, native, the same bytes renamed `.exe`.
-- WSL2 Linux x86_64, direct `./app`.
+- WSL2 Linux x86_64 via `sh ./app` (Linux path). Direct `./app` inside WSL runs the Windows PE through WSLInterop; an earlier revision of this report counted that as a Linux result by mistake.
 
 ### P4: second build host
 
@@ -390,3 +390,57 @@ Break-even falls somewhere between the probe and the synthetic app, roughly 0.5�
 - **Payload index:** mini_blar (BLIP-based, optional zstd), read by the runtime. The shell keeps fixed offsets written by the packer.
 - **Runtime pattern:** validate_gui's shim, which already does self-describing tails, memfd execution and an atomic Windows cache.
 - **Deltas:** difz uses the same zstd primitive. Its full-libzstd and BLAKE3 engine is larger than a runtime should be, so reuse its format ideas and tests rather than link it.
+
+## 11. Built: the zstd layout (2026-10-13)
+
+The design from §10 is implemented and tested (`./test`, P7 and P4).
+
+- **Core** (Zig, no I/O):
+  - `src/index.zig`: payload index; `encode` emits only what `decode` accepts, and `decode` validates bounds, references and names.
+  - `src/layout.zig`: exhaustive depth-1 root/delta choice.
+  - `src/zstd_encode.zig`, `src/zstd_decode.zig`: frames carry content size and checksum.
+  - `src/targets.zig`: the single OS/CPU table.
+  - `src/pack.zig` `packZstd`: delta candidates are same-CPU targets plus the Windows PE body.
+- **Runtime**: `src/runtime.c` (all I/O) over the core's C API (`src/rocosmo_rt.h`). It is cross-built for seven targets (ReleaseSmall, stripped, decode-only space-optimized zstd), gzipped with `gzip -9 -n` and embedded in `rocosmo-pack`. A container carries only the runtimes for its own targets. The shell unpacks the runtime once per machine into the content-addressed cache; the runtime writes the rebuilt payload to a temp path that the shell renames into the cache, so the existing cache, fallback and symlink checks still apply.
+- **CLI**:
+  - `--layout raw|zstd|auto` (auto keeps the smaller);
+  - `--level 1-22`;
+  - `--freebsd-x86_64`, `--freebsd-aarch64`, `--netbsd-x86_64`;
+  - `-v` reports the choice.
+- **Dependencies**: zstd 1.6.0 sources come from the `zstdz` flake input (pinned commit), compiled by `build.zig`.
+
+**Runtime sizes** (uncompressed / gzipped, bytes):
+
+| Target | Uncompressed | gzipped |
+| --- | ---: | ---: |
+| linux-x86_64 | 77,040 | 42,407 |
+| linux-aarch64 | 79,000 | 46,587 |
+| macos-x86_64 | 56,095 | 24,486 |
+| macos-arm64 | 89,040 | 24,915 |
+| freebsd-x86_64 | 58,656 | 30,458 |
+| freebsd-aarch64 | 52,984 | 29,802 |
+| netbsd-x86_64 | 60,088 | 31,258 |
+
+The Linux runtimes are statically linked with musl; its stdio accounts for part of their size, so a libc-free Linux runtime is the obvious next trim.
+
+**Results:**
+
+| App | Targets | Raw layout | zstd layout | Verified on |
+| --- | --- | ---: | ---: | --- |
+| z7z (Zig) | Windows x64 PE + Linux, macOS, FreeBSD x64/arm64, NetBSD x64 | 9,885,200 | 3,682,559 | Linux x64, macOS arm64, Rosetta, Windows x64, WSL2 (`sh`) |
+| synthetic Roc app | Windows x64 PE + Linux/macOS x64/arm64 | 2,516,816 | 911,866 | Linux x64, macOS arm64 |
+| P2 probe app | same | raw kept by `auto` (runtimes outweigh 8 KB of frames) | | |
+
+**Tested in P7 and P4:**
+- **Native runs.** Linux x64 under dash, bash, zsh and busybox with `PATH` limited to `uname mkdir dd chmod mv rm gzip`; macOS arm64 run as `./app` and as `sh ./app`; Windows x64 (the PE runs in place).
+- **Emulated runs.** Rosetta 2. Linux aarch64: the extracted aarch64 runtime rebuilds the payload under qemu-user, and the payload then runs there too.
+- **Correctness of extraction.** The rebuilt payload is byte-identical to the original, and the unpacked runtime is byte-identical to the built one. A warm run needs neither `gzip` nor the runtime.
+- **Corrupted frames** fail with exit 126 and leave no cached payload.
+- **32 concurrent cold starts** leave exactly one runtime and one payload in the cache.
+- **Reproducibility.** The macOS-built zstd container is byte-identical to the Linux-built one, so the seven runtimes cross-build reproducibly on both hosts.
+
+**Not yet:**
+- No FreeBSD or NetBSD host has run its runtime.
+- Windows ARM64 is still emulated.
+- Payloads are cached on disk on every OS; running them from memory on Linux and the BSDs is not built.
+- The cache is not yet namespaced per app or self-cleaning (planned: `--app-id` in reverse-DNS form).

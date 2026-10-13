@@ -49,6 +49,9 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [x] Decode-only zstd: 28-38 KB per target, applies --patch-from deltas, rejects a wrong reference. (2026-10-13 4:30 PM EDT)
 - [x] Research: OpenBSD syscall pinning, in-memory exec, BSD base gzip, bare Mach-O notarization, Rust/Zig target tiers. (2026-10-13 4:40 PM EDT)
 - [x] Write findings and a recommendation into RESEARCH.md §10. (2026-10-13 4:55 PM EDT)
-- [ ] Build the shared runtime (decode-only zstd, mini_blar index, memfd or cache exec) and measure its real size; then let rocosmo-pack choose gzip-only or zstd+delta per container.
+- [x] Build the shared runtime and the zstd layout; rocosmo-pack chooses raw or zstd per container (RESEARCH.md section 11). (2026-10-13 6:10 PM EDT)
+- [ ] Trim the Linux runtimes (libc-free, no stdio).
+- [ ] Run payloads from memory on Linux/FreeBSD/NetBSD for small payloads.
+- [ ] Run the FreeBSD and NetBSD runtimes on real hosts or VMs.
 - [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.
 - [ ] App-namespaced, self-cleaning cache (BDFN, 2026-10-13): `--app-id` in reverse-DNS form (e.g. `llc.mecha.validate`); payloads under `rocosmo/apps/<app-id>/<hash>`, runtimes shared under `rocosmo/runtime/<hash>`; an app deletes only its own superseded entries; macOS may use `~/Library/Caches/<app-id>`. Open: default when `--app-id` is absent.

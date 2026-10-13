@@ -17,17 +17,21 @@ Prototype. A probe app runs natively on Linux x86_64, macOS arm64 (Apple Silicon
 nix develop
 probes/p2_native_targets/build out/p2        # one native executable per target
 zig build                                    # builds zig-out/bin/rocosmo-pack
-zig-out/bin/rocosmo-pack \
+zig-out/bin/rocosmo-pack -v \
 	--windows-x86_64 out/p2/app-x64win.exe \
 	--linux-x86_64 out/p2/app-x64musl --linux-aarch64 out/p2/app-arm64musl \
 	--macos-x86_64 out/p2/app-x64mac --macos-arm64 out/p2/app-arm64mac \
-	-o app
+	-o app                                   # also: --freebsd-x86_64 --freebsd-aarch64 --netbsd-x86_64
 ./app 20                                     # prints 121; rename to app.exe on Windows
 ```
 
+## Layouts
+
+`--layout raw` stores each payload as-is; the shell copies it out with `dd`. `--layout zstd` stores each target as a zstd frame or as a delta against a same-CPU target or the Windows PE body, plus a small gzipped runtime per OS/CPU that the shell unpacks with the system `gzip` once per machine and that rebuilds the payload into the cache. The default, `--layout auto`, builds both and keeps the smaller: raw for tiny apps, zstd once payloads reach a few hundred KB. zstd sources come from the pinned `zstdz` flake input.
+
 ## Test
 
-`./test` runs the packer unit tests and probes P1–P6. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
+`./test` runs the core unit tests and probes P1–P7. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
 
 ```sh
 ROCOSMO_MACOS_ARM64_HOST=...
