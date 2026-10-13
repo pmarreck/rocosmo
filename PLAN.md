@@ -33,3 +33,10 @@
 - [ ] Real platform package: per-OS libc-free Zig host with args, environment, I/O and a size-recording allocator.
 - [ ] `rocosmo` wrapper command running all target builds plus packing; build scripts portable to a Windows build host.
 - [ ] Optional gzip payload compression and an `--assimilate` mode.
+
+## BDFN decisions 2026-10-13 (afternoon)
+
+- [ ] Add FreeBSD, OpenBSD and NetBSD x86_64 payloads (Roc already targets them); BSD test hosts are still needed.
+- [ ] Payload compression. Measured on the probe app: gzip -9 lands within 4-13% of zstd -19 and xz -9, and stock macOS 26.7.1 ships gzip and bzip2 but not zstd or xz. Proposed: gzip now; zstd only with an embedded decoder. Awaiting a decision.
+- [ ] Optional Apple Developer ID signing of the macOS payloads, run on a macOS build host; the ad-hoc signature stays the default.
+- [ ] Self-cleaning cache: the dispatcher removes this app's superseded extractions. Layout and race handling are awaiting a decision.
