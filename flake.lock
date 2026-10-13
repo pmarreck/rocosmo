@@ -18,7 +18,25 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "zstdz": "zstdz"
+      }
+    },
+    "zstdz": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790638174,
+        "narHash": "sha256-n6/gX0fglWMPpzvje/E6j77MheQCPXTwtz+wZoFh21k=",
+        "owner": "pmarreck",
+        "repo": "zstdz",
+        "rev": "484cc81791e44d22f459054aedd3ec53dbb20174",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pmarreck",
+        "repo": "zstdz",
+        "rev": "484cc81791e44d22f459054aedd3ec53dbb20174",
+        "type": "github"
       }
     }
   },

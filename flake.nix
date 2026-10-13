@@ -3,9 +3,14 @@
 
 	inputs = {
 		nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+		# zstd sources (Zig-packaged fork of upstream zstd); compiled directly by build.zig.
+		zstdz = {
+			url = "github:pmarreck/zstdz/484cc81791e44d22f459054aedd3ec53dbb20174";
+			flake = false;
+		};
 	};
 
-	outputs = { self, nixpkgs }:
+	outputs = { self, nixpkgs, zstdz }:
 		let
 			# Roc has no numbered release. Pin one immutable nightly tag; see RESEARCH.md
 			# "Updating pins" for the procedure. Hashes are the GitHub release digests.
@@ -83,8 +88,8 @@
 						pkgs.xz
 					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu ];
 					# Busybox applets would shadow coreutils/tar on PATH; expose only the binary.
-					# Upstream zstd sources for the decode-only decoder probe (P6).
-					ROCOSMO_ZSTD_SRC = "${pkgs.zstd.src}";
+					# zstd sources for build.zig and the decode-only decoder probe (P6).
+					ROCOSMO_ZSTD_SRC = "${zstdz}";
 					ROCOSMO_BUSYBOX = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.busybox}/bin/busybox";
 				};
 			});

@@ -12,7 +12,7 @@ pub const Payload = extern struct {
 	bytes_len: usize,
 };
 
-pub const Status = enum(c_int) { ok = 0, not_pe = 1, unsupported_pe = 2, headers_overflow = 3, invalid_pattern = 4, out_of_memory = 5, invalid_argument = 6 };
+pub const Status = enum(c_int) { ok = 0, not_pe = 1, unsupported_pe = 2, headers_overflow = 3, invalid_pattern = 4, out_of_memory = 5, invalid_argument = 6, invalid_name = 7, too_many_targets = 8, encode_failed = 9, unknown_target = 10 };
 
 const gpa = std.heap.c_allocator;
 
@@ -34,6 +34,9 @@ export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payl
 		error.HeadersOverflow => .headers_overflow,
 		error.InvalidPattern => .invalid_pattern,
 		error.OutOfMemory => .out_of_memory,
+		error.InvalidName => .invalid_name,
+		error.TooManyTargets => .too_many_targets,
+		error.EncodeFailed => .encode_failed,
 	};
 	o.* = result.ptr;
 	ol.* = result.len;
@@ -52,6 +55,10 @@ export fn rocosmo_status_message(status: c_int) callconv(.c) [*:0]const u8 {
 		3 => "dispatcher script and PE headers do not fit before the first section",
 		4 => "payload pattern may contain only letters, digits, '_', '-', '.' and '|' separators",
 		5 => "out of memory",
+		7 => "target names may contain only letters, digits, '_', '-' and '.'",
+		8 => "too many targets",
+		9 => "zstd compression failed",
+		10 => "unknown target name",
 		else => "invalid argument",
 	};
 }

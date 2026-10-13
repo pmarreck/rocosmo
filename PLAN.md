@@ -51,3 +51,4 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [x] Write findings and a recommendation into RESEARCH.md §10. (2026-10-13 4:55 PM EDT)
 - [ ] Build the shared runtime (decode-only zstd, mini_blar index, memfd or cache exec) and measure its real size; then let rocosmo-pack choose gzip-only or zstd+delta per container.
 - [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.
+- [ ] App-namespaced, self-cleaning cache (BDFN, 2026-10-13): `--app-id` in reverse-DNS form (e.g. `llc.mecha.validate`); payloads under `rocosmo/apps/<app-id>/<hash>`, runtimes shared under `rocosmo/runtime/<hash>`; an app deletes only its own superseded entries; macOS may use `~/Library/Caches/<app-id>`. Open: default when `--app-id` is absent.
