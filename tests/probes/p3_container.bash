@@ -82,3 +82,24 @@ for i in $(seq 32); do env -i PATH="$tools" XDG_CACHE_HOME="$shared" "$(command 
 wait
 bad=0; for i in $(seq 32); do [ "$(cat "$p3/par.$i")" = 121 ] || bad=$((bad + 1)); done
 assert_eq "32 concurrent cold starts: all correct, one cache entry" "0 1" "$bad $(ls "$shared/rocosmo" | wc -l)"
+
+# The same file inside WSL2 on the Windows host: a real Linux x86_64 kernel in a
+# Hyper-V VM. Native CPU execution, but a Linux result, not a Windows one.
+host="${ROCOSMO_WSL_VIA_WINDOWS_HOST-}"
+if [ -n "$host" ]; then
+	scp -q "${SSH_OPTS[@]}" "$app" "$host:rocosmo-p3wsl"
+	run_capture ssh "${SSH_OPTS[@]}" "$host" 'wsl -e sh -c "XDG_CACHE_HOME=/tmp/rocosmo-p3-cache sh ./rocosmo-p3wsl 20"'
+	assert_eq "WSL2 linux x86_64 on the Windows host (same file)" "121" "$out"
+else
+	fail "WSL2 linux x86_64 run" "ROCOSMO_WSL_VIA_WINDOWS_HOST not set"
+fi
+
+# macOS x86_64 branch under Rosetta 2 on Apple Silicon: EMULATION evidence only.
+host="${ROCOSMO_MACOS_ARM64_HOST-}"
+if [ -n "$host" ]; then
+	run_capture ssh "${SSH_OPTS[@]}" "$host" 'c="${TMPDIR:-/tmp}/rocosmo-p3-rosetta"; rm -rf "$c"; XDG_CACHE_HOME="$c" arch -x86_64 /bin/sh ./rocosmo-p3 20 && file "$c/rocosmo/$(ls "$c/rocosmo")"'
+	assert_eq "EMULATED macOS x86_64 (Rosetta 2) run" "121" "$(printf '%s\n' "$out" | head -1)"
+	case "$out" in *Mach-O*x86_64*) pass "Rosetta run selected the x86_64 Mach-O payload";; *) fail "Rosetta payload selection" "$out";; esac
+else
+	fail "EMULATED macOS x86_64 (Rosetta 2) run" "ROCOSMO_MACOS_ARM64_HOST not set"
+fi
