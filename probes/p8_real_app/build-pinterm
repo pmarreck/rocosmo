@@ -49,8 +49,13 @@ for t in "$@"; do
 	# shellcheck disable=SC2086
 	zig cc -target "$cct" $warn -O2 -fPIC -fvisibility=hidden -c "$w/platform/host.c" -o "$w/host-$rt.o" || exit 1
 	ar rcs "$w/platform/targets/$rt/libhost.a" "$w/host-$rt.o"
-	"$PINTERM_ROC" build "$w/src/main.roc" --opt=speed --target="$rt" --jobs=4 --no-cache --output="$w/lib-$rt.a" >"$w/roc-$rt.log" 2>&1 \
-		|| { echo "build-pinterm: roc build $t failed (see $w/roc-$rt.log)" >&2; exit 1; }
+	# Reuse the Roc archive if it is newer than every Roc source (the slow step).
+	if [ -z "$(find "$src/src" "$src/platform" -newer "$w/lib-$rt.a" 2>/dev/null)" ] && [ -f "$w/lib-$rt.a" ]; then
+		echo "build-pinterm: reusing $w/lib-$rt.a" >&2
+	else
+		"$PINTERM_ROC" build "$w/src/main.roc" --opt=speed --target="$rt" --jobs=4 --no-cache --output="$w/lib-$rt.a" >"$w/roc-$rt.log" 2>&1 \
+			|| { echo "build-pinterm: roc build $t failed (see $w/roc-$rt.log)" >&2; exit 1; }
+	fi
 	link_extra=-static; case "$linkt" in *macos*) link_extra="-include $here/macos_compat.h" ;; esac
 	# shellcheck disable=SC2086
 	zig cc -target "$linkt" $warn -O2 $link_extra -I"$w/platform" -I"$src/host" "$src"/host/*.c "$w/lib-$rt.a" -lm -o "$out/pinterm-$t.tmp" \
