@@ -32,11 +32,11 @@
 
 - [ ] Real platform package: per-OS libc-free Zig host with args, environment, I/O and a size-recording allocator.
 - [ ] `rocosmo` wrapper command running all target builds plus packing; build scripts portable to a Windows build host.
-- [ ] Optional gzip payload compression and an `--assimilate` mode.
+- [x] Payload compression (zstd, below). `--assimilate` declined by BDFN (2026-10-13 11:44 PM EDT): a universal binary must not rewrite itself into a single-platform one to save space.
 
 ## BDFN decisions 2026-10-13 (afternoon)
 
-- [ ] Add FreeBSD, OpenBSD and NetBSD x86_64 payloads (Roc already targets them); BSD test hosts are still needed.
+- [x] FreeBSD x86_64/aarch64 and NetBSD x86_64 containers verified in QEMU VMs, P9 (2026-10-14 12:20 AM EDT). OpenBSD still open (item 5).
 - [x] Payload compression: zstd with an embedded per-OS/CPU decoder runtime (see the zstd runtime section below). (2026-10-13 6:10 PM EDT)
 - [x] Self-cleaning cache: decided and built (see below). (2026-10-13 7:20 PM EDT)
 
@@ -50,17 +50,19 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [x] Write findings and a recommendation into RESEARCH.md §10. (2026-10-13 4:55 PM EDT)
 - [x] Build the shared runtime and the zstd layout; rocosmo-pack chooses raw or zstd per container (RESEARCH.md section 11). (2026-10-13 6:10 PM EDT)
 - [ ] Run payloads from memory on Linux/FreeBSD/NetBSD for small payloads.
-- [ ] Run the FreeBSD and NetBSD runtimes on real hosts or VMs.
+- [x] Run the FreeBSD and NetBSD runtimes on real hosts or VMs: P9, RESEARCH.md §13 (2026-10-14 12:20 AM EDT).
 - [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.
 - [x] App-namespaced, self-cleaning cache: `--app-id`, embedded `ROCOSMO_APP_ID=<id>;` (Roc, Zig, Rust), default `local.<name>`; macOS uses ~/Library/Caches. (2026-10-13 7:20 PM EDT)
 
 ## Work order (BDFN, 2026-10-13 8:12 PM EDT: signing goes last)
 
 1. [x] Pack a real app, pinterm (Roc game with a C terminal host), into one file: RESEARCH.md section 12 (2026-10-13 9:05 PM EDT).
-2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). Next: FreeBSD/NetBSD (memfd_create since FreeBSD 13.0, NetBSD 11.0), untestable without hosts.
+   - [ ] pinterm 45e5ad7 adds macOS sound (AudioToolbox via dlopen, no SDK). Rebuild the container, then update RESEARCH.md section 12's "silent on macOS" item; someone still has to listen on a Mac.
+2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). Next: FreeBSD/NetBSD (memfd_create since FreeBSD 13.0, NetBSD 11.0), now testable in P9's VMs.
 3. [x] Trim the Linux runtimes (libc-free, no stdio): 44-48 KB to 27.5 KB gzipped; RESEARCH.md section 11.x (2026-10-13 9:52 PM EDT).
-4. `--assimilate`.
-5. Run the FreeBSD and NetBSD runtimes on real hosts or VMs; then OpenBSD.
+4. ~~`--assimilate`~~ declined (see above); the container never rewrites itself.
+4a. [ ] No APE/Cosmopolitan dependency (BDFN, 2026-10-13 11:55 PM EDT): retire the P1 cosmocc probe from `./test` and drop `cosmocc` from the flake; keep its findings in RESEARCH.md and credit Cosmopolitan and APE (Justine Tunney) in README.md as the design the container format descends from. The shipped pipeline already uses none of it.
+5. [x] FreeBSD and NetBSD runtimes in QEMU VMs (P9, 2026-10-14 12:20 AM EDT). Found and fixed: NetBSD sh and OpenBSD ksh reject NUL bytes (new dd/eval header line), ksh's `r` alias (function renamed). Next: OpenBSD (runtime needs `openbsd.syscalls` or a sysroot; no cloud-init image, so a serial-driven install).
 6. Windows ARM64 native relay; builds from Linux aarch64 and macOS x86_64 hosts.
 7. Real platform package and `rocosmo` wrapper command; shared per-arch code.
 8. Last: optional Apple Developer ID signing of the macOS payloads on a macOS build host (ad-hoc stays the default; the app id can serve as the signing identifier).

@@ -254,7 +254,7 @@ written per OS in the host, the work Cosmopolitan does for C programs.
   - Shells run the file through the `ENOEXEC` script fallback.
   - Raw `execve` from Python `subprocess` without a shell, or from similar
     parents, fails on Unix. Fixes: binfmt_misc on Linux, an `--assimilate`
-    mode, or shipping the extracted native file.
+    mode (declined: the container never rewrites itself), or shipping the extracted native file.
 - **Cache location.** `$XDG_CACHE_HOME` or `$HOME/.cache`, with the private
   `TMPDIR` fallback. Cache entries are never garbage-collected yet.
 - **ABI and threads.** The libc-free host is single-threaded with a bump
@@ -278,7 +278,8 @@ Adopt option B. Next, in order:
 3. **Implement the Windows ARM64 relay in the x64 host**
    (`IsWow64Process2`, extract, `CreateProcessW`) and test it on Windows 11 on
    Arm hardware.
-4. **Add optional gzip payload compression and `--assimilate`.**
+4. **Add optional gzip payload compression and `--assimilate`.** (Compression
+   shipped as zstd in section 11; `--assimilate` was declined.)
 
 Open questions for the BDFN:
 
@@ -501,3 +502,47 @@ Measured with `gzip -9 -n`, as embedded. Three changes:
 | macos-arm64 | 25,240 | 23,640 |
 
 Dropping stdio alone took Linux to about 35 KB, removing musl to about 31 KB, and dropping unwind tables to 27.5 KB. Decode-only zstd is now most of each runtime. P7 gates both Linux runtimes at 28,000 bytes.
+
+## 13. BSD on real kernels (2026-10-14)
+
+`tests/probes/p9_bsd_vms.bash` boots official release images under QEMU and
+runs one container inside each: FreeBSD 15.1 x86_64 (KVM), NetBSD 11.0 x86_64
+(KVM) and FreeBSD 15.1 aarch64 (QEMU TCG emulation of a Cortex-A72; the
+aarch64 runtime and payload run as aarch64 code inside an emulated machine, so
+this is EMULATED, not native hardware). `probes/p9_bsd_vms/run-in-vm` verifies
+each image against its published checksum, caches it in
+`${XDG_CACHE_HOME:-~/.cache}/rocosmo-vm`, boots a throwaway qcow2 overlay and
+passes the bundle in as a raw tar disk. FreeBSD runs the guest script from a
+NoCloud seed disk (its `nuageinit` executes a `#!` user-data script);
+NetBSD's live image has no such hook, so `netbsd.exp` drives its boot menu
+over SeaBIOS's serial console (`etc/sercon-port`) into a single-user shell.
+P9 takes about a minute; the emulated aarch64 guest dominates.
+
+All three pass: zstd and raw layouts select the right payload, arguments with
+spaces and exit statuses pass through, a rerun uses the cache, a direct
+`./app` falls back to the shell, and the zstd cache holds exactly the runtime
+and one payload. FreeBSD and NetBSD use the cache path; memfd execution there
+is still Linux-only.
+
+Two shell findings changed the container header:
+
+- **NUL bytes.** NetBSD's `/bin/sh` is built with `REJECT_NULS`
+  (`bin/sh/Makefile`) and fails with `nul ('\0') in shell input` on any line
+  holding a NUL; OpenBSD's ksh (tested as `oksh` 7.9 on Linux) fails with
+  `NUL byte unexpected`. Both read and check one line at a time. The PE field
+  `e_lfanew` at 0x3C always holds NUL bytes for a header below 16 MiB, so the
+  APE-style header (`MZqFpD='` opening a quoted string that swallows the DOS
+  header) cannot run there. APE files use that same header, so this probably
+  affects them too; that is inferred from the bytes, not tested. The header is
+  now line 1 `MZ=;eval "$(dd if="$0" bs=64 skip=1 count=N 2>/dev/null)"`,
+  which fits in the DOS header bytes the Windows loader ignores (0x02-0x3B).
+  It reads the NUL-free script region [0x40, e_lfanew) and evals it, so no
+  shell reaches line 2. `e_lfanew` is now 64-byte aligned to match.
+- **ksh aliases.** pdksh and mksh predefine `r='fc -e -'`, so a dispatcher
+  function named `r` was rewritten before it was defined. It is now `rt`; a
+  unit test rejects function names from ksh's default alias list.
+
+The local shell matrix (P3, P7) now includes `oksh` and `mksh`. Linux,
+macOS (native and Rosetta 2), Windows and WSL2 still pass with the new header.
+OpenBSD itself remains untested: its runtime needs the `openbsd.syscalls`
+section or an OpenBSD sysroot, and OpenBSD publishes no cloud-init image.

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Boot a pinned BSD release image in QEMU, run guest.sh from BUNDLE_DIR inside
+# it and print the script's output. The bundle travels as a raw tar disk; the
+# root disk is a throwaway qcow2 overlay, so the cached base image never changes.
+#   freebsd-*: official BASIC-CLOUDINIT image; a NoCloud seed disk carries a
+#              user-data script that FreeBSD's nuageinit runs at boot.
+#   netbsd-*:  official live image; netbsd.exp drives its boot menu over the
+#              SeaBIOS serial console into a single-user root shell.
+# Usage: run-in-vm OS BUNDLE_DIR   (OS: freebsd-x86_64 freebsd-aarch64 netbsd-x86_64)
+# Images are verified against pinned checksums and cached in
+# ${ROCOSMO_VM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/rocosmo-vm}.
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+os="${1:?usage: run-in-vm OS BUNDLE_DIR}"
+bundle="${2:?usage: run-in-vm OS BUNDLE_DIR}"
+cache="${ROCOSMO_VM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/rocosmo-vm}"
+fbsd=https://download.freebsd.org/releases/VM-IMAGES/15.1-RELEASE
+# OS -> URL, checksum command, published checksum, boot timeout (seconds)
+case "$os" in
+	freebsd-x86_64) url=$fbsd/amd64/Latest/FreeBSD-15.1-RELEASE-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz
+		sum=sha256sum hash=e4ca4db889f8559c9b9dfcacc70405c038476f4b6d41649b152d3809a2ed9e1f limit=180 ;;
+	freebsd-aarch64) url=$fbsd/aarch64/Latest/FreeBSD-15.1-RELEASE-arm64-aarch64-BASIC-CLOUDINIT-ufs.qcow2.xz
+		sum=sha256sum hash=9722aea499610802de9a14bb645707fc4f6df49ff765cd9ce372b783c4693963 limit=900 ;;
+	netbsd-x86_64) url=https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.0/images/NetBSD-11.0-amd64-live.img.gz
+		sum=sha512sum hash=ad0bc2786b2cd8b7c140ae108fd780064465fe06337a3a2c3f3b694ed3a1e042b3d401c9a682be02c081f3eb3efeba1246cfd6a8803149468ebfbd9c0e7c77e8 limit=180 ;;
+	*) echo "run-in-vm: unknown OS $os" >&2; exit 2 ;;
+esac
+
+# Download, verify and decompress the base image once; the decompressed file
+# appears under its final name only after the archive matched the checksum.
+packed="${url##*/}" image="$cache/${packed%.*}"
+if [ ! -f "$image" ]; then
+	mkdir -p "$cache" || exit 1
+	part="$cache/$packed.part.$$"
+	echo "run-in-vm: downloading $packed" >&2
+	curl -sSfL -o "$part" "$url" || exit 1
+	got="$($sum "$part" | cut -d' ' -f1)"
+	[ "$got" = "$hash" ] || { echo "run-in-vm: checksum mismatch for $packed: $got" >&2; mv "$part" "$part.bad"; exit 1; }
+	case "$packed" in *.xz) xz -dc "$part" ;; *.gz) gzip -dc "$part" ;; esac >"$image.part.$$" && mv "$image.part.$$" "$image" || exit 1
+	mv "$part" "$cache/$packed"
+fi
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/rocosmo-vm.XXXXXX")" || exit 1
+trap 'rm -rf -- "$work"' EXIT
+case "$image" in *.qcow2) fmt=qcow2 ;; *) fmt=raw ;; esac
+qemu-img create -q -f qcow2 -F "$fmt" -b "$image" "$work/root.qcow2" || exit 1
+tar -cf "$work/bundle.tar" -C "$bundle" . || exit 1
+
+case "$os" in
+freebsd-*)
+	# The bundle disk is found by trying each extra disk, so device order does not matter.
+	cat >"$work/user-data" <<-'EOF'
+	#!/bin/sh
+	mkdir -p /tmp/bundle && cd /tmp/bundle
+	for d in /dev/vtbd1 /dev/vtbd2; do tar -xf "$d" 2>/dev/null && [ -f guest.sh ] && break; done
+	echo ROCOSMO-BEGIN
+	sh ./guest.sh
+	echo ROCOSMO-END
+	poweroff
+	EOF
+	printf 'instance-id: rocosmo-p9\nlocal-hostname: rocosmo-p9\n' >"$work/meta-data"
+	truncate -s 2M "$work/seed.img" && mkfs.vfat -n CIDATA "$work/seed.img" >/dev/null \
+		&& mcopy -i "$work/seed.img" "$work/user-data" "$work/meta-data" :: || exit 1
+	disks=(-drive "file=$work/root.qcow2,if=virtio" -drive "file=$work/bundle.tar,if=virtio,format=raw,readonly=on"
+		-drive "file=$work/seed.img,if=virtio,format=raw")
+	common=(-m 1024 -smp 2 -nic none -display none -monitor none -serial "file:$work/serial.log")
+	if [ "$os" = freebsd-x86_64 ]; then
+		timeout "$limit" qemu-system-x86_64 -enable-kvm -cpu host "${common[@]}" "${disks[@]}" </dev/null
+	else
+		fw="$(dirname "$(dirname "$(command -v qemu-system-aarch64)")")/share/qemu/edk2-aarch64-code.fd"
+		timeout "$limit" qemu-system-aarch64 -M virt -cpu cortex-a72 -accel tcg,thread=multi -bios "$fw" "${common[@]}" "${disks[@]}" </dev/null
+	fi
+	rc=$?
+	;;
+netbsd-*)
+	timeout "$limit" expect "$here/netbsd.exp" "$work/root.qcow2" "$work/bundle.tar" >"$work/serial.log" </dev/null
+	rc=$?
+	;;
+esac
+log="$(tr -d '\r' <"$work/serial.log")"
+case "$log" in
+	*ROCOSMO-BEGIN*ROCOSMO-END*) ;;
+	*) echo "run-in-vm: $os exited $rc without completing the guest script; last console lines:" >&2
+		printf '%s\n' "$log" | tail -n 30 >&2; exit 1 ;;
+esac
+printf '%s\n' "$log" | sed -n '/^ROCOSMO-BEGIN$/,/^ROCOSMO-END$/p' | sed '1d;$d'

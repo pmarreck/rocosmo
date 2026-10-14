@@ -22,7 +22,7 @@ run_capture llvm-objdump -p "$app"
 assert_rc0 "llvm-objdump parses the relocated PE headers"
 
 tools="$(minimal_path "$p3/bin" uname mkdir dd chmod mv rm)"
-for shell in dash bash zsh busybox; do
+for shell in dash bash zsh busybox oksh mksh; do  # oksh, mksh: pdksh family (NetBSD and OpenBSD ksh)
 	cache="$p3/cache-$shell"
 	if [ "$shell" = busybox ]; then cmd=("${ROCOSMO_BUSYBOX:?}" sh "$app" 20); else cmd=("$shell" "$app" 20); fi
 	run_capture env -i PATH="$tools" XDG_CACHE_HOME="$cache" "$(command -v "${cmd[0]}")" "${cmd[@]:1}"

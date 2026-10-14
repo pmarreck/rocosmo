@@ -2,14 +2,14 @@
 
 Research and a working prototype for distributing a [Roc](https://www.roc-lang.org/) program as one file that runs natively on Linux, macOS and Windows and carries both x86_64 and aarch64 code. The file can be built from Linux or macOS.
 
-The approach borrows the polyglot header trick of Cosmopolitan's [Actually Portable Executable](https://justine.lol/ape.html). It does not use Cosmopolitan libc. Roc's own cross-compiler produces a native, libc-free executable per OS and CPU. `rocosmo-pack` then joins them:
+The approach descends from Justine Tunney's [Actually Portable Executable](https://justine.lol/ape.html) (APE), the polyglot file format of [Cosmopolitan](https://github.com/jart/cosmopolitan), which showed that one file can be both a Windows PE and a POSIX shell script. rocosmo uses no Cosmopolitan code. Its header differs from APE's so that shells which reject NUL bytes (NetBSD `sh`, OpenBSD `ksh`) can run it too (RESEARCH.md §13). Roc's own cross-compiler produces a native, libc-free executable per OS and CPU. `rocosmo-pack` then joins them:
 
 - **Windows** loads the file as an ordinary x64 PE.
 - **POSIX shells** run its header as a small `sh` dispatcher, which extracts the matching native executable to a content-addressed cache and `exec`s it.
 
 ## Status
 
-Prototype. A probe app runs natively on Linux x86_64, macOS arm64 (Apple Silicon) and Windows x86_64 from the same bytes. The Linux aarch64 and macOS x86_64 payloads are verified only under qemu-user and Rosetta 2. Windows ARM64 runs the x64 code under Windows 11's emulator. See [RESEARCH.md](RESEARCH.md) for the full matrix, evidence and limits, and [APE_DISPATCH.md](APE_DISPATCH.md) for how the dispatch works.
+Prototype. A probe app runs natively on Linux x86_64, macOS arm64 (Apple Silicon) and Windows x86_64 from the same bytes. FreeBSD 15.1 and NetBSD 11.0 x86_64 run it in KVM virtual machines, and FreeBSD aarch64 in an emulated one. The Linux aarch64 and macOS x86_64 payloads are verified only under qemu-user and Rosetta 2. Windows ARM64 runs the x64 code under Windows 11's emulator. See [RESEARCH.md](RESEARCH.md) for the full matrix, evidence and limits, and [APE_DISPATCH.md](APE_DISPATCH.md) for how the dispatch works.
 
 ## Use
 
@@ -43,7 +43,7 @@ The app id is lowercase reverse-DNS (`org.example.tool`). `--app-id` sets it. Ot
 
 ## Test
 
-`./test` runs the core unit tests and probes P1–P7. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
+`./test` runs the core unit tests and probes P1–P9 (P8, the pinterm build, is run by hand). P9 boots FreeBSD and NetBSD release images under QEMU; the first run downloads and verifies about 1.9 GB of images into `~/.cache/rocosmo-vm`. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
 
 ```sh
 ROCOSMO_MACOS_ARM64_HOST=...

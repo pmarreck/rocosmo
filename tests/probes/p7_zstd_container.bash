@@ -52,7 +52,7 @@ case "$out" in *--freebsd-x86_64*--layout*) pass "--help lists BSD targets and -
 # --- native Linux x86_64 ---
 app="$p7/app"
 tools="$(minimal_path "$p7/bin" uname mkdir dd chmod mv rm gzip)"
-for shell in dash bash zsh busybox; do
+for shell in dash bash zsh busybox oksh mksh; do  # oksh, mksh: pdksh family (NetBSD and OpenBSD ksh)
 	cache="$p7/cache-$shell"
 	if [ "$shell" = busybox ]; then cmd=("${ROCOSMO_BUSYBOX:?}" sh "$app" 20); else cmd=("$shell" "$app" 20); fi
 	run_capture env -i PATH="$tools" XDG_CACHE_HOME="$cache" "$(command -v "${cmd[0]}")" "${cmd[@]:1}"

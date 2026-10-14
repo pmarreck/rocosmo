@@ -84,9 +84,11 @@
 						pkgs.jq
 						pkgs.dash
 						pkgs.zsh
+						pkgs.oksh
+						pkgs.mksh
 						pkgs.zstd
 						pkgs.xz
-					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu ];
+					] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu pkgs.expect pkgs.mtools pkgs.dosfstools ];
 					# Busybox applets would shadow coreutils/tar on PATH; expose only the binary.
 					# zstd sources for build.zig and the decode-only decoder probe (P6).
 					ROCOSMO_ZSTD_SRC = "${zstdz}";

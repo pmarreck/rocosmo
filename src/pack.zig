@@ -55,9 +55,19 @@ const num_width = 10;
 /// Index entry name of the Windows PE body, a free delta reference.
 pub const pe_body_name = "windows-x86_64-body";
 
-const dos_prefix = "MZqFpD='";
+/// Line 1 of the file, inside the DOS header bytes the Windows loader ignores
+/// (only "MZ" at 0 and e_lfanew at 0x3c matter). It reads the script region
+/// [0x40, e_lfanew) with dd and evals it, so a shell never parses line 2, which
+/// holds e_lfanew's NUL bytes: NetBSD sh and OpenBSD ksh refuse any line with
+/// a NUL. The block count is patched in by writeFront once e_lfanew is known.
+const dos_line_head = "MZ=;eval \"$(dd if=\"$0\" bs=64 skip=1 count=";
+const dos_count_width = 3; // up to 999 blocks: a 64 KB script
+const dos_line_tail = " 2>/dev/null)\"\n";
+comptime {
+	if (dos_line_head.len + dos_count_width + dos_line_tail.len > 0x3c) @compileError("line 1 overlaps e_lfanew");
+}
+const script_block = 64;
 const script_start =
-	"'\n" ++
 	"s=$(command -v \"$0\")||s=$0\n" ++
 	// Cache home: $XDG_CACHE_HOME, else ~/Library/Caches on macOS, else ~/.cache.
 	"c=${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/rocosmo\n" ++
@@ -97,22 +107,23 @@ const script_tail = case_end ++ cache_dir ++
 	dd_range ++ " >\"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++
 	cleanup ++ "}\n" ++ exec_tail;
 /// zstd layout: o/n locate this OS/CPU's gzipped runtime, cached once per
-/// machine as $c/runtime/$h and shared by all apps (r unpacks it); it reads
+/// machine as $c/runtime/$h and shared by all apps (rt unpacks it; not r,
+/// which ksh predefines as an alias); it reads
 /// the index at x/y and writes target $p to a temp file (z). On Linux the
 /// runtime instead runs the payload from a memfd (--exec), so only the runtime
 /// is cached; it re-runs the container with ROCOSMO_NO_MEMFD=1 to come back
 /// to the cache path when that is impossible or the payload is too large.
 const script_tail_zstd = case_end ++ cache_dir ++
-	"r(){ g=$c/runtime/$h\n" ++
+	"rt(){ g=$c/runtime/$h\n" ++
 	"[ -x \"$g\" ]&&return\n" ++
 	"mkdir -p \"$c/runtime\";u=$g.$$ b=$((n/4096)) r=$((n%4096))\n" ++
 	dd_range ++ "|gzip -dc >\"$u\"&&chmod 755 \"$u\"&&mv -f \"$u\" \"$g\"||{ rm -f \"$u\";echo \"$0: cannot unpack runtime\" >&2;exit 126;}\n" ++
 	"}\n" ++
 	"k(){ " ++ cleanup ++ "}\n" ++
-	"z(){ r;t=$f.$$\n" ++
+	"z(){ rt;t=$f.$$\n" ++
 	"\"$g\" \"$s\" $x $y $p \"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++
 	"k;}\n" ++
-	"[ -x \"$f\" ]||[ -n \"$ROCOSMO_NO_MEMFD\" ]||case $p in linux-*)r;k;exec \"$g\" --exec \"$s\" $x $y $p \"$0\" \"$@\";;esac\n" ++
+	"[ -x \"$f\" ]||[ -n \"$ROCOSMO_NO_MEMFD\" ]||case $p in linux-*)rt;k;exec \"$g\" --exec \"$s\" $x $y $p \"$0\" \"$@\";;esac\n" ++
 	exec_tail;
 
 fn shortHash(bytes: []const u8) [16]u8 {
@@ -131,8 +142,9 @@ fn writeStart(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8) 
 }
 
 fn writeDosPrefix(list: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
-	try list.appendSlice(gpa, dos_prefix);
-	try list.append(gpa, '\n');
+	try list.appendSlice(gpa, dos_line_head);
+	try list.appendNTimes(gpa, ' ', dos_count_width); // block count, patched by writeFront
+	try list.appendSlice(gpa, dos_line_tail);
 	while (list.items.len < 0x3c) try list.append(gpa, ' ');
 	try list.appendSlice(gpa, "\x00\x00\x00\x00"); // e_lfanew, patched later
 }
@@ -235,9 +247,9 @@ fn bump32(b: []u8, o: usize, delta: usize) void {
 const Header = struct { lfanew: usize, soh: usize, body_end: usize };
 
 fn headerLayout(info: PeInfo, pe_len: usize, script_len: usize) PackError!Header {
-	var lfanew = alignUp(script_len, 8);
-	// e_lfanew's bytes sit inside the quoted string; a 0x27 byte would end it.
-	while (@as(u8, @truncate(lfanew)) == '\'' or @as(u8, @truncate(lfanew >> 8)) == '\'') lfanew += 8;
+	// Whole 64-byte blocks, so line 1's dd reads exactly the script region.
+	const lfanew = alignUp(script_len, script_block);
+	if ((lfanew - 0x40) / script_block >= std.math.pow(usize, 10, dos_count_width)) return error.HeadersOverflow;
 	const hdr_len = 24 + info.opt_size + 40 * info.nsec;
 	const soh = @max(alignUp(lfanew + hdr_len, info.file_align), info.soh);
 	if (soh > info.min_va) return error.HeadersOverflow;
@@ -252,6 +264,7 @@ fn writeFront(out: []u8, pe: []const u8, info: PeInfo, script: []const u8, h: He
 	const delta = h.soh - info.soh;
 	@memcpy(out[0..script.len], script);
 	@memset(out[script.len..h.lfanew], '\n');
+	_ = std.fmt.bufPrint(out[dos_line_head.len..][0..dos_count_width], "{d}", .{(h.lfanew - 0x40) / script_block}) catch unreachable;
 	wr32(out, 0x3c, h.lfanew);
 	@memcpy(out[h.lfanew..][0..hdr_len], pe[info.lfanew..][0..hdr_len]);
 	@memcpy(out[h.soh..h.body_end], pe[info.soh..]);
@@ -513,13 +526,48 @@ fn rd16(b: []const u8, o: usize) u16 {
 	return std.mem.readInt(u16, b[o..][0..2], .little);
 }
 
-test "output starts as both an MZ header and a shell assignment" {
+/// Independent reading of the shell entry: line 1 must end inside the DOS
+/// header's free bytes (before e_lfanew at 0x3c), hold no NUL, and dd exactly
+/// the NUL-free script region [0x40, e_lfanew) for eval. Shells that reject
+/// NUL bytes (NetBSD sh, OpenBSD ksh) then never read e_lfanew's zero bytes.
+fn expectTrampoline(out: []const u8) !void {
+	try testing.expectEqualStrings("MZ", out[0..2]);
+	const nl = std.mem.indexOfScalar(u8, out[0..0x3c], '\n') orelse return error.TestLineOneTooLong;
+	const line = out[0..nl];
+	try testing.expect(std.mem.indexOfScalar(u8, line, 0) == null);
+	const at = std.mem.indexOf(u8, line, "bs=64 skip=1 count=") orelse return error.TestNoDd;
+	const count = try std.fmt.parseInt(usize, std.mem.sliceTo(line[at + 19 ..], ' '), 10);
+	const lfanew = rd32(out, 0x3c);
+	try testing.expectEqual(@as(usize, lfanew), 64 + 64 * count);
+	const script = out[0x40..lfanew];
+	try testing.expect(std.mem.indexOfScalar(u8, script, 0) == null);
+	try testing.expect(std.mem.indexOf(u8, script, "exit 127\n") != null);
+}
+
+/// ksh (pdksh, mksh) predefines these aliases; a dispatcher function with one
+/// of these names is rewritten by alias expansion before it is defined.
+const ksh_aliases = [_][]const u8{ "autoload", "command", "fc", "functions", "hash", "history", "integer", "local", "login", "nohup", "r", "stop", "suspend", "type" };
+
+fn expectNoAliasedFunctions(out: []const u8) !void {
+	const script = out[0x40..rd32(out, 0x3c)];
+	var defined: usize = 0;
+	var lines = std.mem.splitScalar(u8, script, '\n');
+	while (lines.next()) |l| {
+		const paren = std.mem.indexOf(u8, l, "(){") orelse continue;
+		defined += 1;
+		for (ksh_aliases) |a| try testing.expect(!std.mem.eql(u8, l[0..paren], a));
+	}
+	try testing.expect(defined > 0);
+}
+
+test "line 1 is a NUL-free trampoline that evals exactly the script region" {
 	const gpa = testing.allocator;
 	const pe = try fakePe(gpa);
 	defer gpa.free(pe);
-	const out = try pack(gpa, pe, &.{}, test_id);
+	const out = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "abc" }}, test_id);
 	defer gpa.free(out);
-	try testing.expectEqualStrings("MZqFpD='", out[0..8]);
+	try expectTrampoline(out);
+	try expectNoAliasedFunctions(out);
 }
 
 test "e_lfanew locates a PE header whose sections hold the original bytes" {
@@ -548,21 +596,6 @@ test "e_lfanew locates a PE header whose sections hold the original bytes" {
 	}
 	// Headers must still end before the first section is mapped.
 	try testing.expect(rd32(out, opt + 60) <= rd32(out, sec + 12));
-}
-
-test "shell text before the PE header contains no stray single quote" {
-	const gpa = testing.allocator;
-	const pe = try fakePe(gpa);
-	defer gpa.free(pe);
-	const out = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "abc" }}, test_id);
-	defer gpa.free(out);
-	const lfanew = rd32(out, 0x3c);
-	// Exactly two quotes delimit the swallowed DOS header: offsets 7 and 0x40.
-	var quotes: usize = 0;
-	for (out[0..lfanew]) |c| quotes += @intFromBool(c == '\'');
-	try testing.expectEqual(@as(usize, 2), quotes);
-	try testing.expectEqual(@as(u8, '\''), out[0x40]);
-	try testing.expect(std.mem.indexOf(u8, out[0..lfanew], "exit") != null);
 }
 
 /// Parse "pattern) ... off=N len=M" lines back out of the script: an
@@ -749,7 +782,8 @@ test "zstd layout: every target rebuilds byte-exact from the script, index and f
 	const ts = z.targets();
 	const out = try packZstd(gpa, pe, &ts, 19, test_id);
 	defer gpa.free(out);
-	try testing.expectEqualStrings("MZqFpD='", out[0..8]);
+	try expectTrampoline(out);
+	try expectNoAliasedFunctions(out);
 	for (ts) |t| {
 		try testing.expectEqualStrings(t.name, scriptField(out, t.pattern, "p") orelse return error.TestNoLine);
 		const got = try rebuild(gpa, out, t.name);

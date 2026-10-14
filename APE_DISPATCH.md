@@ -15,7 +15,7 @@ valid:
 
 | Reader | What it requires | What APE puts there |
 | --- | --- | --- |
-| Windows PE loader | `MZ` at offset 0, `e_lfanew` (u32 at 0x3C) pointing to `PE\0\0` | `MZqFpD='` and a real `e_lfanew` |
+| Windows PE loader | `MZ` at offset 0, `e_lfanew` (u32 at 0x3C) pointing to `PE\0\0` | `MZqFpD='` and a real `e_lfanew` (rocosmo: see note below) |
 | POSIX `sh` (after the kernel returns `ENOEXEC`) | Text it can parse up to an `exec` or `exit` | The same bytes read as the assignment `MZqFpD='...'` followed by a script |
 | Linux/BSD kernel via binfmt or the APE loader | An ELF image | ELF program headers placed inside the file and mapped by a small loader |
 | x86_64 macOS (XNU) | Mach-O load commands | `LC_SEGMENT_64` commands (`__PAGEZERO`, `__APE1..3`) embedded in the file (`ape.S` ~893–920) |
@@ -35,6 +35,15 @@ Two details make this survive real shells:
   offset 8.
 - **No stray quote bytes.** Any `0x27` inside the quoted/binary region would end
   the string early, so header values must avoid it.
+
+**rocosmo's header differs (2026-10-14).** NetBSD `sh` and OpenBSD `ksh`
+reject any input line containing a NUL, and the quoted DOS header must contain
+`e_lfanew`'s zero bytes. rocosmo's line 1 is instead
+`MZ=;eval "$(dd if="$0" bs=64 skip=1 count=N 2>/dev/null)"`, which ends inside
+the DOS header bytes Windows ignores (before 0x3C). It evals the NUL-free script
+stored between 0x40 and the 64-byte-aligned `e_lfanew`, so no shell parses line
+2. The Windows loader still reads only `MZ` and `e_lfanew`. RESEARCH.md §13 has
+the evidence.
 
 When a file without `#!` fails `execve` with `ENOEXEC`, POSIX shells, glibc
 `execvp` and Cosmopolitan's own `execve` re-run it with `/bin/sh`. A raw
@@ -165,6 +174,7 @@ Added:
 - **Compression.** The macOS payloads are mostly 16 KiB page padding. Optional
   `gzip -dc` extraction, as APE does, would shrink them at the cost of one more
   required tool.
-- **`--assimilate`.** Rewriting the file into the native executable for the
-  current platform would allow direct `execve` from non-shell parents.
+- **`--assimilate` (declined).** Rewriting the file into the native executable for the
+  current platform would allow direct `execve` from non-shell parents. BDFN
+  declined it: the container stays universal and never rewrites itself.
 - **Shared per-architecture code.** See RESEARCH.md §7.

@@ -1,0 +1,29 @@
+# Drive the NetBSD live image to a single-user shell over the serial port and
+# run guest.sh from the bundle disk. SeaBIOS's serial console (etc/sercon-port
+# = 0x3f8) mirrors the BIOS boot menu onto the serial port; "consdev com0"
+# moves the kernel console there too. Markers are typed split ("ROCOSMO""-BEGIN")
+# so the echoed command line never matches the printed marker.
+# Usage: expect netbsd.exp ROOT_QCOW2 BUNDLE_TAR
+set root [lindex $argv 0]
+set bundle [lindex $argv 1]
+set sercon [file join [file dirname $root] sercon-port]
+set f [open $sercon wb]; puts -nonewline $f "\xf8\x03"; close $f
+set timeout 120
+spawn -noecho qemu-system-x86_64 -enable-kvm -cpu host -m 1024 -smp 2 -nographic -nic none \
+	-fw_cfg name=etc/sercon-port,file=$sercon \
+	-drive file=$root,if=virtio -drive file=$bundle,if=virtio,format=raw,readonly=on
+proc step {pattern reply} {
+	expect {
+		$pattern { send $reply }
+		timeout { puts "\nnetbsd.exp: timed out waiting for: $pattern"; exit 1 }
+		eof { puts "\nnetbsd.exp: VM exited waiting for: $pattern"; exit 1 }
+	}
+}
+step "Choose an option" "3"
+step "> " "consdev com0\r"
+step "> " "boot -s\r"
+step "RETURN for /bin/sh" "\r"
+step "# " "mount_tmpfs tmpfs /tmp && mkdir /tmp/bundle && cd /tmp/bundle && tar -xf /dev/rld1d; echo ROCOSMO\"\"-BEGIN; sh ./guest.sh; echo ROCOSMO\"\"-END\r"
+step "\nROCOSMO-END" ""
+step "# " "halt -p\r"
+expect eof
