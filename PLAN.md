@@ -75,6 +75,8 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [ ] Attractive README showing the one-command use.
 - [ ] `rocosmo` command written in Roc on basic-cli: builds exactly the targets the app's platform declares, then packs them (BDFN, 2026-10-14 8:10 AM EDT).
 - [ ] Idea (BDFN, 2026-10-14 12:30 PM EDT): ship the Roc compiler itself as a rocosmo container that produces rocosmo containers.
+- [ ] Question (BDFN, 2026-10-14 12:44 PM EDT): app icons across OSes; awaiting a decision on scope.
+- [ ] Question (BDFN, 2026-10-14 12:44 PM EDT): double-clickable macOS GUI apps (.app bundle); awaiting a decision on scope.
 - [ ] Audit all commits and tracked files for private details before the first public push; push only after BDFN picks the remote.
 
 8. Last: optional Apple Developer ID signing of the macOS payloads on a macOS build host (ad-hoc stays the default; the app id can serve as the signing identifier).
