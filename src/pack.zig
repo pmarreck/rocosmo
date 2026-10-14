@@ -138,7 +138,10 @@ const script_tail = case_end ++ cache_dir ++
 /// runtime instead runs the payload from a memfd (--exec), so only the runtime
 /// is cached; it re-runs the container with ROCOSMO_NO_MEMFD=1 to come back
 /// to the cache path when that is impossible or the payload is too large.
-const script_tail_zstd = case_end ++ cache_dir ++
+/// The zstd layout embeds Zstandard decoder runtimes; this comment points
+/// recipients at its BSD license (the full text ships in THIRD_PARTY_NOTICES.md).
+const zstd_license_line = "# Contains Zstandard (BSD license): https://github.com/facebook/zstd/blob/dev/LICENSE\n";
+const script_tail_zstd = case_end ++ zstd_license_line ++ cache_dir ++
 	"rt(){ g=$c/runtime/$h\n" ++
 	"[ -x \"$g\" ]&&return\n" ++
 	"mkdir -p \"$c/runtime\";u=$g.$$ b=$((n/4096)) r=$((n%4096))\n" ++
@@ -1008,4 +1011,22 @@ test "POSIX-only zstd layout rebuilds every target byte-exact and references no 
 	defer gpa.free(entries);
 	try testing.expectEqual(@as(usize, 0), entries[0].stored_len);
 	for (entries[1..]) |e| try testing.expect(e.ref == null or e.ref.? != 0);
+}
+
+test "zstd containers name Zstandard's license in the script; raw containers do not" {
+	const gpa = testing.allocator;
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	for ([_]?[]const u8{ pe, null }) |maybe_pe| {
+		const zo = try packZstd(gpa, maybe_pe, &ts, 3, test_id);
+		defer gpa.free(zo);
+		const r = scriptRegion(zo);
+		try testing.expect(std.mem.indexOf(u8, zo[r.start..r.end], zstd_license_line) != null);
+		const raw = try pack(gpa, maybe_pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "abc" }}, test_id);
+		defer gpa.free(raw);
+		try testing.expect(std.mem.indexOf(u8, raw, "zstd") == null);
+	}
 }

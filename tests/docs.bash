@@ -8,3 +8,10 @@ else
 	fail "LICENSE holds the MIT text" "missing or not MIT"
 fi
 if grep -q '](LICENSE)' "$ROOT/README.md"; then pass "README links LICENSE"; else fail "README links LICENSE"; fi
+if grep -q '^Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.$' "$ROOT/THIRD_PARTY_NOTICES.md" 2>/dev/null \
+	&& grep -q 'Redistributions in binary form must reproduce' "$ROOT/THIRD_PARTY_NOTICES.md"; then
+	pass "THIRD_PARTY_NOTICES.md carries Zstandard's BSD license"
+else
+	fail "THIRD_PARTY_NOTICES.md carries Zstandard's BSD license" "missing"
+fi
+if grep -q '](THIRD_PARTY_NOTICES.md)' "$ROOT/README.md"; then pass "README links THIRD_PARTY_NOTICES.md"; else fail "README links THIRD_PARTY_NOTICES.md"; fi

@@ -61,4 +61,4 @@ See [INTENT.md](INTENT.md) for scope and [PLAN.md](PLAN.md) for progress.
 
 rocosmo is MIT-licensed; see [LICENSE](LICENSE).
 
-`rocosmo-pack` and every `--layout zstd` container include code from [Zstandard](https://github.com/facebook/zstd), which Meta distributes under a BSD license or GPLv2. Under the BSD terms, anyone redistributing those binaries must reproduce Zstandard's copyright notice and license in their documentation. `--layout raw` containers contain no Zstandard code.
+`rocosmo-pack` and every `--layout zstd` container include code from [Zstandard](https://github.com/facebook/zstd), used under its BSD license. Its BSD terms require binary redistributions to reproduce the notice, so ship [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) alongside such containers. Each zstd container also names the license URL in a comment in its dispatcher script. `--layout raw` containers contain no Zstandard code.
