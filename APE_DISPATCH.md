@@ -86,8 +86,8 @@ and the scheme needed write access to the program file. Later releases moved
 to the separate cached loader described above.
 
 External tools the stub needs: `sh`, `uname`, `mkdir`, `dd`, `gzip`, `chmod`,
-`mv`, plus `cc` on Apple Silicon. Probe P1 runs a Roc-built APE on Linux with
-`PATH` limited to exactly the first seven.
+`mv`, plus `cc` on Apple Silicon. Probe P1 (retired 2026-10-14) ran a Roc-built
+APE on Linux with `PATH` limited to exactly the first seven.
 
 ## 3. Where architecture sharing comes from
 

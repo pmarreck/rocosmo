@@ -1,5 +1,5 @@
 {
-	description = "rocosmo research environment: pinned Roc nightly and official Cosmopolitan toolchain";
+	description = "rocosmo: one Roc-built file for Linux, macOS, Windows and the BSDs; pinned Roc nightly";
 
 	inputs = {
 		nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -22,10 +22,6 @@
 				x86_64-darwin = { name = "macos_x86_64"; hash = "sha256-iIRWD2kck1QMH6OxoKR75+4QBhnQFiaVgxB869XZN+c="; };
 			};
 
-			# Latest official Cosmopolitan release (GitHub release 4.0.2, 2025-01-06).
-			# Fetched from the versioned file, never the mutable cosmocc.zip alias.
-			cosmoccVersion = "4.0.2";
-			cosmoccHash = "sha256-6KZv7KU2rJhwfc9k6z9I6ZdfIS1KqRFLZUo8YyuD7ZY=";
 
 			systems = builtins.attrNames rocAssets;
 			forAll = f: nixpkgs.lib.genAttrs systems (system: f system nixpkgs.legacyPackages.${system});
@@ -54,29 +50,12 @@
 						'';
 					};
 
-					cosmocc = pkgs.stdenvNoCC.mkDerivation {
-						pname = "cosmocc";
-						version = cosmoccVersion;
-						src = pkgs.fetchzip {
-							url = "https://cosmo.zip/pub/cosmocc/cosmocc-${cosmoccVersion}.zip";
-							hash = cosmoccHash;
-							stripRoot = false;
-						};
-						dontConfigure = true;
-						dontBuild = true;
-						dontFixup = true;
-						installPhase = ''
-							mkdir -p $out
-							cp -r $src/. $out/
-						'';
-					};
 				});
 
 			devShells = forAll (system: pkgs: {
 				default = pkgs.mkShell {
 					packages = [
 						self.packages.${system}.roc
-						self.packages.${system}.cosmocc
 						pkgs.zig
 						pkgs.file
 						pkgs.binutils
@@ -98,7 +77,6 @@
 
 			checks = forAll (system: pkgs: {
 				roc = self.packages.${system}.roc;
-				cosmocc = self.packages.${system}.cosmocc;
 			});
 		};
 }

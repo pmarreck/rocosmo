@@ -61,7 +61,7 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). Next: FreeBSD/NetBSD (memfd_create since FreeBSD 13.0, NetBSD 11.0), now testable in P9's VMs.
 3. [x] Trim the Linux runtimes (libc-free, no stdio): 44-48 KB to 27.5 KB gzipped; RESEARCH.md section 11.x (2026-10-13 9:52 PM EDT).
 4. ~~`--assimilate`~~ declined (see above); the container never rewrites itself.
-4a. [ ] No APE/Cosmopolitan dependency (BDFN, 2026-10-13 11:55 PM EDT): retire the P1 cosmocc probe from `./test` and drop `cosmocc` from the flake; keep its findings in RESEARCH.md and credit Cosmopolitan and APE (Justine Tunney) in README.md as the design the container format descends from. The shipped pipeline already uses none of it.
+4a. [x] (2026-10-14 12:35 AM EDT) No APE/Cosmopolitan dependency (BDFN, 2026-10-13 11:55 PM EDT): retire the P1 cosmocc probe from `./test` and drop `cosmocc` from the flake; keep its findings in RESEARCH.md and credit Cosmopolitan and APE (Justine Tunney) in README.md as the design the container format descends from. The shipped pipeline already uses none of it.
 5. [x] FreeBSD and NetBSD runtimes in QEMU VMs (P9, 2026-10-14 12:20 AM EDT). Found and fixed: NetBSD sh and OpenBSD ksh reject NUL bytes (new dd/eval header line), ksh's `r` alias (function renamed). Next: OpenBSD (runtime needs `openbsd.syscalls` or a sysroot; no cloud-init image, so a serial-driven install).
 6. Windows ARM64 native relay; builds from Linux aarch64 and macOS x86_64 hosts.
 7. Real platform package and `rocosmo` wrapper command; shared per-arch code.

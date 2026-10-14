@@ -20,7 +20,8 @@ now.
   per-target host objects and a post-link packer are enough.
 - **The Cosmopolitan route also works**, through Roc's `output: Archive` plus
   `cosmocc`/`apelink`, but it requires cosmo-libc and adds a `cc` dependency on
-  Apple Silicon (tested; §5 P1).
+  Apple Silicon (tested; §5 P1). That probe is retired: rocosmo keeps no
+  Cosmopolitan dependency.
 - **Remaining gaps.** Windows ARM64 runs only the x64 PE under Prism
   emulation; a native ARM64 relay is designed but not built. Linux aarch64 is
   tested only under qemu-user. An aarch64 Linux build host and an x86_64 macOS
@@ -32,21 +33,19 @@ now.
 | --- | --- | --- |
 | Roc compiler | `nightly-2026-10-12-2664a27` | [roc-lang/nightlies release](https://github.com/roc-lang/nightlies/releases/tag/nightly-2026-10-12-2664a27), per-system tarballs hashed in `flake.nix` from the release's SHA-256 digests |
 | Roc source read | `main` at `c79847aa738cfb849b27e52354474d536a073da8` (2026-10-13) | <https://github.com/roc-lang/roc/tree/c79847aa738cfb849b27e52354474d536a073da8> |
-| Cosmopolitan toolchain | `cosmocc-4.0.2.zip` | <https://cosmo.zip/pub/cosmocc/cosmocc-4.0.2.zip>; GitHub release 4.0.2 published 2025-01-06 is still the latest release on 2026-10-13. The mutable `cosmocc.zip` alias currently has the same size and ETag; the flake never uses it. |
+| Cosmopolitan toolchain (P1 only; removed 2026-10-14) | `cosmocc-4.0.2.zip` | <https://cosmo.zip/pub/cosmocc/cosmocc-4.0.2.zip>; GitHub release 4.0.2 published 2025-01-06. |
 | Cosmopolitan source read | `master` at `c7c9916eb8ceaa5062c917d1fea5efb0ee6b49b4` (2026-10-13) | <https://github.com/jart/cosmopolitan/tree/c7c9916eb8ceaa5062c917d1fea5efb0ee6b49b4> |
 | Zig (hosts, packer) | 0.16.0 from nixpkgs (`flake.lock`) | nixpkgs |
 
-nixpkgs also packages `cosmocc` 4.0.2, but only for `x86_64-linux`. The flake
-fetches the official zip so macOS hosts get the same toolchain.
+The flake no longer carries `cosmocc`: rocosmo has no Cosmopolitan dependency.
+P1, the comparison probe that used it, is retired; its code is in git history
+up to commit 760d3bd, and its findings remain in §5.
 
 ### Updating pins
 
 - **Roc:** pick a tag from the nightlies releases page. Set `rocNightly`, then
   copy each asset's `sha256:` digest into `rocAssets` (convert with
   `nix hash convert --hash-algo sha256 --to sri HEX`). Run `./test`.
-- **Cosmopolitan:** when a new `cosmocc-X.Y.Z.zip` appears, set
-  `cosmoccVersion`, use `lib.fakeHash` for `cosmoccHash`, run
-  `nix build .#cosmocc`, copy the reported hash and run `./test`.
 - **nixpkgs:** `nix flake update`, then `./test`.
 
 ## 3. Terms kept separate
@@ -110,7 +109,7 @@ Test hosts used: a Linux x86_64 NixOS build host; an Apple M4 Max on macOS
 26.7.1 with Xcode; a Windows 10 22H2 (build 19045) x86_64 PC; and WSL2
 (kernel 6.18.33.2-microsoft-standard-WSL2) on that PC.
 
-### P1: Roc archive linked by cosmocc (`probes/p1_cosmo_archive`)
+### P1: Roc archive linked by cosmocc (retired 2026-10-14; `probes/p1_cosmo_archive` up to commit 760d3bd)
 
 `roc build --target={x64musl,arm64musl}` with `output: Archive` produces 2.3 KB
 archives. The per-architecture `cosmocc` drivers link them with a C host, and
