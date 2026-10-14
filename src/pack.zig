@@ -389,21 +389,22 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target,
 	try writeScriptZstd(&probe, gpa, id, targets, rt_offsets, 0, idx_len);
 	const h = try headerLayout(info, pe.len, probe.items.len);
 
-	var cursor = alignUp(h.body_end, payload_align);
+	// Only the runtime blobs are aligned: the shell copies them with 4 KiB dd
+	// blocks. The runtime preads the index and frames, so those pack tightly.
+	var cursor = h.body_end;
 	for (targets, rt_offsets) |t, *off| {
-		off.* = cursor;
-		cursor = alignUp(cursor + t.runtime_gz.len, payload_align);
+		off.* = alignUp(cursor, payload_align);
+		cursor = off.* + t.runtime_gz.len;
 	}
 	const idx_off = cursor;
-	cursor = alignUp(cursor + idx_len, payload_align);
+	cursor += idx_len;
 	const frame_offsets = try gpa.alloc(usize, n);
 	defer gpa.free(frame_offsets);
-	var total = idx_off + idx_len;
 	for (chosen, frame_offsets) |f, *off| {
 		off.* = cursor;
-		total = cursor + f.len;
-		cursor = alignUp(total, payload_align);
+		cursor += f.len;
 	}
+	const total = cursor;
 
 	fillEntries(entries, targets, plan.choice, chosen, body.len, h.soh, 1, frame_offsets);
 	const idx = index.encode(gpa, entries) catch |e| return mapIdx(e);
@@ -821,6 +822,35 @@ test "zstd layout: a near-identical same-CPU target becomes a delta; CPUs never 
 		try testing.expect(same_cpu);
 	}
 	try testing.expectEqual(@as(usize, 1), deltas);
+}
+
+test "zstd layout pads only the runtime blobs the shell copies with dd" {
+	const gpa = testing.allocator;
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	const out = try packZstd(gpa, pe, &ts, 19, test_id);
+	defer gpa.free(out);
+	// The index follows the last runtime blob directly.
+	var rt_end: usize = 0;
+	for (ts) |t| {
+		const o = try std.fmt.parseInt(usize, scriptField(out, t.pattern, "o").?, 10);
+		rt_end = @max(rt_end, o + t.runtime_gz.len);
+	}
+	const x = scriptGlobal(out, "x").?;
+	const y = scriptGlobal(out, "y").?;
+	try testing.expectEqual(rt_end, x);
+	// The runtime preads the frames, so they follow the index and each other with no gap.
+	const entries = try index.decode(gpa, out[x..][0..y], out.len);
+	defer gpa.free(entries);
+	var cursor: usize = x + y;
+	for (entries[1..]) |e| {
+		try testing.expectEqual(cursor, e.offset);
+		cursor += e.stored_len;
+	}
+	try testing.expectEqual(out.len, cursor);
 }
 
 test "zstd layout keeps the PE sections intact and is deterministic" {
