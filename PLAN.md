@@ -37,9 +37,8 @@
 ## BDFN decisions 2026-10-13 (afternoon)
 
 - [ ] Add FreeBSD, OpenBSD and NetBSD x86_64 payloads (Roc already targets them); BSD test hosts are still needed.
-- [ ] Payload compression. Measured on the probe app: gzip -9 lands within 4-13% of zstd -19 and xz -9, and stock macOS 26.7.1 ships gzip and bzip2 but not zstd or xz. Proposed: gzip now; zstd only with an embedded decoder. Awaiting a decision.
-- [ ] Optional Apple Developer ID signing of the macOS payloads, run on a macOS build host; the ad-hoc signature stays the default.
-- [ ] Self-cleaning cache: the dispatcher removes this app's superseded extractions. Layout and race handling are awaiting a decision.
+- [x] Payload compression: zstd with an embedded per-OS/CPU decoder runtime (see the zstd runtime section below). (2026-10-13 6:10 PM EDT)
+- [x] Self-cleaning cache: decided and built (see below). (2026-10-13 7:20 PM EDT)
 
 ## zstd runtime design study (BDFN, 2026-10-13 4:10 PM EDT)
 
@@ -55,3 +54,13 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [ ] Run the FreeBSD and NetBSD runtimes on real hosts or VMs.
 - [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.
 - [x] App-namespaced, self-cleaning cache: `--app-id`, embedded `ROCOSMO_APP_ID=<id>;` (Roc, Zig, Rust), default `local.<name>`; macOS uses ~/Library/Caches. (2026-10-13 7:20 PM EDT)
+
+## Work order (BDFN, 2026-10-13 8:12 PM EDT: signing goes last)
+
+1. Trim the Linux runtimes (libc-free, no stdio).
+2. Run payloads from memory on Linux/FreeBSD/NetBSD for small payloads.
+3. `--assimilate`.
+4. Run the FreeBSD and NetBSD runtimes on real hosts or VMs; then OpenBSD.
+5. Windows ARM64 native relay; builds from Linux aarch64 and macOS x86_64 hosts.
+6. Real platform package and `rocosmo` wrapper command; shared per-arch code.
+7. Last: optional Apple Developer ID signing of the macOS payloads on a macOS build host (ad-hoc stays the default; the app id can serve as the signing identifier).
