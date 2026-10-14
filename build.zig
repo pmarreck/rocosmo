@@ -17,6 +17,19 @@ fn addZstd(b: *std.Build, mod: *std.Build.Module, src: []const u8, full: bool) v
 	if (full) mod.addCSourceFiles(.{ .root = lib, .files = &zstd_compress, .flags = flags });
 }
 
+/// musl's Linux headers from Zig's own lib directory, for C compiled without
+/// linking a C library (declarations and constants only).
+fn addMuslHeaders(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Arch) void {
+	const inc = b.graph.zig_lib_directory.join(b.allocator, &.{ "libc", "include" }) catch @panic("OOM");
+	const family = switch (arch) {
+		.x86_64 => "x86",
+		.aarch64 => "aarch64",
+		else => @panic("libc-free runtimes support x86_64 and aarch64"),
+	};
+	for ([_][]const u8{ b.fmt("{s}-linux-musl", .{@tagName(arch)}), "generic-musl", b.fmt("{s}-linux-any", .{family}), "any-linux-any" }) |dir|
+		mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ inc, dir }) });
+}
+
 /// Runtime targets: index name (as in src/targets.zig) and Zig target triple.
 const runtime_targets = [_][2][]const u8{
 	.{ "linux-x86_64", "x86_64-linux-musl" },
@@ -39,10 +52,18 @@ fn runtimesModule(b: *std.Build, zstd_src: []const u8, version: []const u8) *std
 	for (runtime_targets) |rt| {
 		const query = std.Target.Query.parse(.{ .arch_os_abi = rt[1] }) catch @panic("bad runtime triple");
 		const t = b.resolveTargetQuery(query);
-		const core = b.createModule(.{ .root_source_file = b.path("src/rt_ffi.zig"), .target = t, .optimize = .ReleaseSmall, .link_libc = true, .strip = true, .single_threaded = true });
+		// Linux runtimes link no C library: nolibc_linux.c supplies the few
+		// functions used, compiled against musl's headers (prototypes only).
+		const libc = t.result.os.tag != .linux;
+		const core = b.createModule(.{ .root_source_file = b.path("src/rt_ffi.zig"), .target = t, .optimize = .ReleaseSmall, .link_libc = libc, .strip = true, .single_threaded = true, .unwind_tables = .none });
+		if (!libc) addMuslHeaders(b, core, t.result.cpu.arch);
 		addZstd(b, core, zstd_src, false);
 		const core_lib = b.addLibrary(.{ .name = "rocosmo_rt", .root_module = core, .linkage = .static });
-		const mod = b.createModule(.{ .target = t, .optimize = .ReleaseSmall, .link_libc = true, .strip = true, .single_threaded = true });
+		const mod = b.createModule(.{ .target = t, .optimize = .ReleaseSmall, .link_libc = libc, .strip = true, .single_threaded = true, .unwind_tables = .none });
+		if (!libc) {
+			addMuslHeaders(b, mod, t.result.cpu.arch);
+			mod.addCSourceFile(.{ .file = b.path("src/nolibc_linux.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-stack-protector" } });
+		}
 		mod.addCSourceFile(.{ .file = b.path("src/runtime.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-D_POSIX_C_SOURCE=200809L", "-D_DARWIN_C_SOURCE", "-D_BSD_SOURCE" } });
 		mod.addIncludePath(b.path("src"));
 		mod.addCMacro("ROCOSMO_VERSION", b.fmt("\"{s}\"", .{version}));

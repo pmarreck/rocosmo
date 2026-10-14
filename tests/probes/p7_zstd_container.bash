@@ -83,9 +83,35 @@ assert_rc0 "pack a 65 MiB payload"
 run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p7/cache-huge" "$(command -v dash)" "$p7/huge" 20
 assert_eq "a payload above the memory limit falls back to the cache and runs" "121 2" "$out $(find "$p7/cache-huge" -type f | wc -l)"
 
+# --- the runtime's own CLI surface (linux x86_64 build) ---
+rt="$rt_dir/linux-x86_64"
+xy="$(head -c 4096 "$app" | LC_ALL=C awk -F'[ =]+' '/^x=/ { print $2, $4; exit }')"
+run_capture "$rt" --about
+case "$rc:$out" in "0:rocosmo-runtime "*": rebuilds a target executable from a rocosmo container (linux-x86_64)") pass "runtime --about: one line with version and platform";; *) fail "runtime --about" "rc=$rc $out";; esac
+run_capture "$rt" -h
+case "$rc:$out" in "0:Usage: rocosmo-runtime CONTAINER INDEX_OFFSET INDEX_LEN TARGET OUT"*"--exec"*) pass "runtime -h prints usage for both modes";; *) fail "runtime -h" "rc=$rc $out";; esac
+run_capture "$rt"
+case "$rc:$err" in "2:rocosmo-runtime: usage: "*) pass "runtime without arguments: usage on stderr, exit 2";; *) fail "runtime no args" "rc=$rc $err";; esac
+run_capture "$rt" "$app" 12x 5 linux-x86_64 "$p7/rt-out"
+assert_eq "runtime rejects a non-numeric index offset (exit 2)" "2:rocosmo-runtime: index offset and length must be decimal integers" "$rc:$err"
+run_capture "$rt" "$p7/no such file" 0 1 linux-x86_64 "$p7/rt-out"
+assert_eq "runtime reports a missing container with its errno text" "1:rocosmo-runtime: $p7/no such file: No such file or directory" "$rc:$err"
+run_capture "$rt" "$app" 999999999 1 linux-x86_64 "$p7/rt-out"
+assert_eq "runtime refuses an index outside the container" "1:rocosmo-runtime: $app: index lies outside the container" "$rc:$err"
+run_capture "$rt" "$app" ${xy% *} ${xy#* } plan9-mips "$p7/rt-out"
+case "$rc:$err" in "1:rocosmo-runtime: plan9-mips: "?*) pass "runtime refuses a target the index lacks";; *) fail "runtime unknown target" "rc=$rc $err";; esac
+: > "$p7/rt-exists"
+run_capture "$rt" "$app" ${xy% *} ${xy#* } linux-x86_64 "$p7/rt-exists"
+assert_eq "runtime never overwrites an existing OUT" "1:rocosmo-runtime: $p7/rt-exists: File exists" "$rc:$err"
+# Size gate: without musl the Linux runtimes should cost about what the
+# macOS ones (libSystem, dynamically linked) do.
+for t in linux-x86_64 linux-aarch64; do
+	gz=$(gzip -9 -n -c "$rt_dir/$t" | wc -c)
+	[ "$gz" -le 28000 ] && pass "$t runtime is at most 28000 bytes gzipped ($gz)" || fail "$t runtime gzipped size" "$gz > 28000"
+done
+
 # --- linux aarch64: runtime and payload under qemu-user (emulation) ---
 o="$(field Linux-aarch64 o)" n="$(field Linux-aarch64 n)"
-xy="$(head -c 4096 "$app" | LC_ALL=C awk -F'[ =]+' '/^x=/ { print $2, $4; exit }')"
 dd if="$app" bs=1 skip="$o" count="$n" 2>/dev/null | gzip -dc > "$p7/rt-aarch64" && chmod 755 "$p7/rt-aarch64"
 run_capture qemu-aarch64 "$p7/rt-aarch64" "$app" ${xy% *} ${xy#* } linux-aarch64 "$p7/arm-payload"
 assert_rc0 "EMULATED linux aarch64 runtime (qemu-user) rebuilds its payload"

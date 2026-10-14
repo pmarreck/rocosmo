@@ -11,17 +11,16 @@
  *     an LSM), it re-runs the container with ROCOSMO_NO_MEMFD=1 and the
  *     dispatcher takes the cache path instead.
  * All I/O lives here; validation, planning and decoding happen in the core
- * behind rocosmo_rt.h. */
+ * behind rocosmo_rt.h. It uses only a few system calls and string functions
+ * (no stdio), so the Linux build can link without a C library (nolibc_linux.c). */
 #ifdef __linux__
 #define _GNU_SOURCE /* memfd_create, sealing */
 #endif
 #include "rocosmo_rt.h"
 #include <errno.h>
 #include <fcntl.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/mman.h>
@@ -40,12 +39,36 @@
 /* Larger payloads are cached on disk: page cache is shared between runs,
  * a memfd copy is private anonymous memory rebuilt on every start. */
 #define MEMORY_LIMIT ((uint64_t)64 << 20)
+#define NO_MEMFD "ROCOSMO_NO_MEMFD"
 
 extern char **environ;
 
+/* Write NULL-terminated string pieces to fd (best effort). */
+static void say(int fd, const char *const *parts) {
+	for (; *parts; parts++) {
+		size_t len = strlen(*parts);
+		for (const char *p = *parts; len;) {
+			ssize_t n = write(fd, p, len);
+			if (n < 0 && errno == EINTR) continue;
+			if (n <= 0) return;
+			p += n;
+			len -= (size_t)n;
+		}
+	}
+}
+#define SAY(fd, ...) say(fd, (const char *const[]){__VA_ARGS__, NULL})
+
 static int fail(const char *what, const char *why) {
-	fprintf(stderr, "rocosmo-runtime: %s: %s\n", what, why);
+	SAY(2, "rocosmo-runtime: ", what, ": ", why, "\n");
 	return 1;
+}
+
+static const char usage_file[] = "rocosmo-runtime CONTAINER INDEX_OFFSET INDEX_LEN TARGET OUT";
+static const char usage_exec[] = "rocosmo-runtime --exec CONTAINER INDEX_OFFSET INDEX_LEN TARGET ARGV0 [ARG]...";
+
+static int usage_error(const char *usage) {
+	SAY(2, "rocosmo-runtime: usage: ", usage, "\n");
+	return 2;
 }
 
 /* Read [off, off+len) of fd into a new buffer (at least 1 byte allocated). */
@@ -62,11 +85,16 @@ static uint8_t *read_range(int fd, uint64_t off, uint64_t len) {
 	return buf;
 }
 
+/* Strict unsigned decimal: digits only, no sign or spaces, no overflow. */
 static int parse_u64(const char *s, uint64_t *v) {
-	char *end;
-	errno = 0;
-	unsigned long long x = strtoull(s, &end, 10);
-	if (errno || end == s || *end || *s == '-') return -1;
+	uint64_t x = 0;
+	if (!*s) return -1;
+	for (; *s; s++) {
+		if (*s < '0' || *s > '9') return -1;
+		unsigned d = (unsigned)(*s - '0');
+		if (x > (UINT64_MAX - d) / 10) return -1;
+		x = x * 10 + d;
+	}
 	*v = x;
 	return 0;
 }
@@ -84,12 +112,15 @@ static int write_all(int fd, const uint8_t *b, size_t len) {
 /* Locate TARGET in the container's index. Leaves fd open on success. */
 static int plan(const char *container, const char *idx_off_s, const char *idx_len_s, const char *name, int *fd_out, rocosmo_rt_plan *p) {
 	uint64_t idx_off, idx_len;
-	if (parse_u64(idx_off_s, &idx_off) || parse_u64(idx_len_s, &idx_len)) return fprintf(stderr, "rocosmo-runtime: index offset and length must be decimal integers\n"), 2;
+	if (parse_u64(idx_off_s, &idx_off) || parse_u64(idx_len_s, &idx_len)) {
+		SAY(2, "rocosmo-runtime: index offset and length must be decimal integers\n");
+		return 2;
+	}
 	int fd = open(container, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) return fail(container, strerror(errno));
-	struct stat st;
-	if (fstat(fd, &st)) return fail(container, strerror(errno));
-	uint64_t size = (uint64_t)st.st_size;
+	off_t end = lseek(fd, 0, SEEK_END);
+	if (end < 0) return fail(container, strerror(errno));
+	uint64_t size = (uint64_t)end;
 	if (idx_off > size || idx_len > size - idx_off) return fail(container, "index lies outside the container");
 	uint8_t *idx = read_range(fd, idx_off, idx_len);
 	if (!idx) return fail(container, "cannot read index");
@@ -135,7 +166,7 @@ static int rebuild(int fd, const char *name, const rocosmo_rt_plan *p, uint8_t *
 }
 
 static int to_file(int argc, char **argv) {
-	if (argc != 6) return fprintf(stderr, "rocosmo-runtime: usage: rocosmo-runtime CONTAINER INDEX_OFFSET INDEX_LEN TARGET OUT\n"), 2;
+	if (argc != 6) return usage_error(usage_file);
 	int fd;
 	rocosmo_rt_plan p;
 	int s = plan(argv[1], argv[2], argv[3], argv[4], &fd, &p);
@@ -150,25 +181,33 @@ static int to_file(int argc, char **argv) {
 	return 0;
 }
 
-/* Run the container again through sh on its cache path (exec; no return on success). */
+/* Run the container again through sh on its cache path, with
+ * ROCOSMO_NO_MEMFD=1 added to the environment (exec; returns only on error). */
 static int fall_back(char *container, char **args) {
-	if (setenv("ROCOSMO_NO_MEMFD", "1", 1)) return fail("ROCOSMO_NO_MEMFD", strerror(errno));
+	size_t n = 0;
+	while (environ[n]) n++;
+	char **env = malloc((n + 2) * sizeof *env);
+	if (!env) return fail(NO_MEMFD, "out of memory");
+	size_t k = 0;
+	for (size_t i = 0; i < n; i++)
+		if (strncmp(environ[i], NO_MEMFD "=", sizeof NO_MEMFD)) env[k++] = environ[i];
+	env[k++] = NO_MEMFD "=1";
+	env[k] = NULL;
 	args[-1] = container; /* sh's $0, overwriting ARGV0 in argv */
 	args[-2] = "sh";
-	execv("/bin/sh", args - 2);
+	execve("/bin/sh", args - 2, env);
 	return fail("/bin/sh", strerror(errno));
 }
 
 /* --exec CONTAINER INDEX_OFFSET INDEX_LEN TARGET ARGV0 [ARG]... */
 static int to_memory(int argc, char **argv) {
-	if (argc < 7) return fprintf(stderr, "rocosmo-runtime: usage: rocosmo-runtime --exec CONTAINER INDEX_OFFSET INDEX_LEN TARGET ARGV0 [ARG]...\n"), 2;
+	if (argc < 7) return usage_error(usage_exec);
 	char *container = argv[2], **app_argv = argv + 6;
 #ifdef __linux__
 	const char *name = argv[5];
 	int fd;
 	rocosmo_rt_plan p;
-	int s = plan(container, argv[3], argv[4], name, &fd, &p);
-	if (s) return 126;
+	if (plan(container, argv[3], argv[4], name, &fd, &p)) return 126;
 	if (p.content_len > MEMORY_LIMIT) { close(fd); return fall_back(container, app_argv + 1); }
 	uint8_t *out;
 	if (rebuild(fd, name, &p, &out)) return 126;
@@ -188,15 +227,14 @@ static int to_memory(int argc, char **argv) {
 
 int main(int argc, char **argv) {
 	if (argc == 2 && (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help"))) {
-		printf("Usage: rocosmo-runtime CONTAINER INDEX_OFFSET INDEX_LEN TARGET OUT\n"
-			"       rocosmo-runtime --exec CONTAINER INDEX_OFFSET INDEX_LEN TARGET ARGV0 [ARG]...\n"
+		SAY(1, "Usage: ", usage_file, "\n       ", usage_exec, "\n"
 			"Rebuild TARGET's executable from a rocosmo zstd-layout CONTAINER into OUT, or\n"
 			"(--exec, Linux) run it from memory, falling back to the cache path.\n"
 			"Normally run by the container's own dispatcher, not by hand.\n");
 		return 0;
 	}
 	if (argc == 2 && !strcmp(argv[1], "--about")) {
-		printf("rocosmo-runtime %s: rebuilds a target executable from a rocosmo container (%s)\n", ROCOSMO_VERSION, ROCOSMO_PLATFORM);
+		SAY(1, "rocosmo-runtime " ROCOSMO_VERSION ": rebuilds a target executable from a rocosmo container (" ROCOSMO_PLATFORM ")\n");
 		return 0;
 	}
 	if (argc > 1 && !strcmp(argv[1], "--exec")) return to_memory(argc, argv);

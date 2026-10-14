@@ -6,6 +6,27 @@ const std = @import("std");
 const index = @import("index.zig");
 const zdec = @import("zstd_decode.zig");
 
+/// C malloc/free: from the C library, or from nolibc_linux.c in the libc-free
+/// Linux runtimes (where std.heap.c_allocator is unavailable).
+const heap = if (@import("builtin").link_libc) std.heap.c_allocator else std.mem.Allocator{ .ptr = undefined, .vtable = &extern_malloc_vtable };
+
+extern fn malloc(n: usize) ?[*]u8;
+extern fn free(p: ?[*]u8) void;
+const extern_malloc_vtable: std.mem.Allocator.VTable = .{
+	.alloc = struct {
+		fn f(_: *anyopaque, n: usize, a: std.mem.Alignment, _: usize) ?[*]u8 {
+			return if (a.toByteUnits() <= 16) malloc(n) else null; // nolibc blocks are 16-byte aligned
+		}
+	}.f,
+	.resize = std.mem.Allocator.noResize,
+	.remap = std.mem.Allocator.noRemap,
+	.free = struct {
+		fn f(_: *anyopaque, m: []u8, _: std.mem.Alignment, _: usize) void {
+			free(m.ptr);
+		}
+	}.f,
+};
+
 pub const Plan = extern struct {
 	offset: u64,
 	stored_len: u64,
@@ -25,8 +46,8 @@ export fn rocosmo_rt_plan_target(idx: ?[*]const u8, idx_len: usize, container_le
 	const o = out orelse return .invalid_argument;
 	const ip = idx orelse return .invalid_argument;
 	const np = name orelse return .invalid_argument;
-	const entries = index.decode(std.heap.c_allocator, ip[0..idx_len], container_len) catch |e| return if (e == error.OutOfMemory) .out_of_memory else .bad_index;
-	defer std.heap.c_allocator.free(entries);
+	const entries = index.decode(heap, ip[0..idx_len], container_len) catch |e| return if (e == error.OutOfMemory) .out_of_memory else .bad_index;
+	defer heap.free(entries);
 	const p = index.plan(entries, np[0..name_len]) catch return .no_such_target;
 	o.* = .{
 		.offset = p.target.offset,

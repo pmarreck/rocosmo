@@ -484,3 +484,22 @@ Problems found, all in pinterm rather than rocosmo:
 - Its Linux binaries carry debug info and are not stripped.
 
 The game was run headless only; nobody has yet played it interactively from the container on macOS.
+
+### 11.x Trimmed runtimes (2026-10-13)
+
+Measured with `gzip -9 -n`, as embedded. Three changes:
+- runtime.c stopped using stdio, `strtoull`, `fstat` and `setenv`;
+- the Linux runtimes link no C library at all, using `src/nolibc_linux.c` (raw syscalls on x86_64/aarch64, an mmap-per-block `malloc`, a short `strerror` table) compiled against musl's headers;
+- unwind tables are off for every runtime.
+
+| Runtime | Before (bytes, gzipped) | After |
+| --- | --- | --- |
+| linux-x86_64 | 43,992 | 27,479 |
+| linux-aarch64 | 48,158 | 27,502 |
+| freebsd-x86_64 | 30,793 | 27,703 |
+| freebsd-aarch64 | 30,037 | 27,541 |
+| netbsd-x86_64 | 31,567 | 28,429 |
+| macos-x86_64 | 24,811 | 24,571 |
+| macos-arm64 | 25,240 | 23,640 |
+
+Dropping stdio alone took Linux to about 35 KB, removing musl to about 31 KB, and dropping unwind tables to 27.5 KB. Decode-only zstd is now most of each runtime. P7 gates both Linux runtimes at 28,000 bytes.

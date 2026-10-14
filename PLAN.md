@@ -49,7 +49,6 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [x] Research: OpenBSD syscall pinning, in-memory exec, BSD base gzip, bare Mach-O notarization, Rust/Zig target tiers. (2026-10-13 4:40 PM EDT)
 - [x] Write findings and a recommendation into RESEARCH.md §10. (2026-10-13 4:55 PM EDT)
 - [x] Build the shared runtime and the zstd layout; rocosmo-pack chooses raw or zstd per container (RESEARCH.md section 11). (2026-10-13 6:10 PM EDT)
-- [ ] Trim the Linux runtimes (libc-free, no stdio).
 - [ ] Run payloads from memory on Linux/FreeBSD/NetBSD for small payloads.
 - [ ] Run the FreeBSD and NetBSD runtimes on real hosts or VMs.
 - [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.
@@ -59,7 +58,7 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 
 1. [x] Pack a real app, pinterm (Roc game with a C terminal host), into one file: RESEARCH.md section 12 (2026-10-13 9:05 PM EDT).
 2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). Next: FreeBSD/NetBSD (memfd_create since FreeBSD 13.0, NetBSD 11.0), untestable without hosts.
-3. Trim the Linux runtimes (libc-free, no stdio).
+3. [x] Trim the Linux runtimes (libc-free, no stdio): 44-48 KB to 27.5 KB gzipped; RESEARCH.md section 11.x (2026-10-13 9:52 PM EDT).
 4. `--assimilate`.
 5. Run the FreeBSD and NetBSD runtimes on real hosts or VMs; then OpenBSD.
 6. Windows ARM64 native relay; builds from Linux aarch64 and macOS x86_64 hosts.
