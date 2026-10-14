@@ -4,7 +4,8 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Publishing (BDFN, 2026-10-14)
 
-- [ ] Add an MIT license (copyright holder: the git author).
+- [x] Add an MIT license (copyright holder: the git author) (done 2026-10-14 14:45 EDT)
+- [ ] Carry the Zstandard BSD notice with zstd-layout containers (embed the text in the container, ship a notices file, or both).
 - [ ] `rocosmo` command in Roc on basic-cli: build exactly the targets the app's platform declares, then pack (universal format when a Windows target exists, else POSIX-only).
 - [ ] TECHNIQUE.md: full technique write-up covering both formats, linked from the README.
 - [ ] Attractive README showing the one-command use.

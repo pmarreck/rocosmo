@@ -56,3 +56,9 @@ ROCOSMO_WSL_X64_HOST=...
 Missing hosts count as failures, not skips.
 
 See [INTENT.md](INTENT.md) for scope and [PLAN.md](PLAN.md) for progress.
+
+## License
+
+rocosmo is MIT-licensed; see [LICENSE](LICENSE).
+
+`rocosmo-pack` and every `--layout zstd` container include code from [Zstandard](https://github.com/facebook/zstd), which Meta distributes under a BSD license or GPLv2. Under the BSD terms, anyone redistributing those binaries must reproduce Zstandard's copyright notice and license in their documentation. `--layout raw` containers contain no Zstandard code.
