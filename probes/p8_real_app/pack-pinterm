@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# P8 stage 2 (inside rocosmo's nix develop): build rocosmo-pack and the
+# Windows stub, then pack OUT/pinterm-<target> files into OUT/pinterm.
+# Usage: pack-pinterm OUT TARGET...
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+rocosmo="$(cd "$here/../.." && pwd)"
+out="${1:?usage: pack-pinterm OUT TARGET...}"; shift
+(cd "$rocosmo" && zig build --prefix "$out/tool") || exit 1
+zig build-exe -target x86_64-windows-gnu -OReleaseSmall -fstrip -fsingle-threaded \
+	"$here/winstub.zig" --name winstub -femit-bin="$out/winstub.exe" --cache-dir "$out/work/zig-cache" || exit 1
+args=(--windows-x86_64 "$out/winstub.exe")
+for t in "$@"; do args+=("--$t" "$out/pinterm-$t"); done
+"$out/tool/bin/rocosmo-pack" "${args[@]}" --app-id dev.rocosmo.pinterm-demo -v -o "$out/pinterm"

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# P8: package a real Roc app, pinterm (Roc game core + POSIX C terminal host),
+# as one rocosmo container. The pinterm checkout is only read: its Roc and C
+# sources are copied into OUT, cross-compiled per target with pinterm's own
+# pinned Roc (its flake), and packed with rocosmo-pack (this flake).
+# Usage: build-pinterm PINTERM_DIR OUT [TARGET...]
+#   TARGET: linux-x86_64 linux-aarch64 macos-arm64 macos-x86_64
+#   (default: all four). Writes OUT/pinterm, the container.
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+rocosmo="$(cd "$here/../.." && pwd)"
+src="$(cd "${1:?usage: build-pinterm PINTERM_DIR OUT [TARGET...]}" && pwd)" || exit 2
+out="${2:?usage: build-pinterm PINTERM_DIR OUT [TARGET...]}"
+shift 2
+[ $# -gt 0 ] || set -- linux-x86_64 linux-aarch64 macos-arm64 macos-x86_64
+mkdir -p "$out" && out="$(cd "$out" && pwd)" || exit 1
+
+# rocosmo target -> Roc target, host-object target, final link target
+spec() {
+	case "$1" in
+		linux-x86_64) echo "x64v1glibc x86_64-linux-gnu x86_64-linux-musl" ;;
+		linux-aarch64) echo "arm64glibc aarch64-linux-gnu aarch64-linux-musl" ;;
+		macos-arm64) echo "arm64mac aarch64-macos aarch64-macos" ;;
+		macos-x86_64) echo "x64mac x86_64-macos x86_64-macos" ;;
+		*) return 1 ;;
+	esac
+}
+for t in "$@"; do spec "$t" >/dev/null || { echo "build-pinterm: unknown target $t" >&2; exit 2; }; done
+
+if [ -z "${PINTERM_ROC:-}" ]; then
+	# Stage 1 in pinterm's environment (its pinned Roc), stage 2 in ours.
+	nix develop "$src" -c "$0" "$src" "$out" "$@" || exit 1
+	exec nix develop "$rocosmo" -c "$here/pack-pinterm" "$out" "$@"
+fi
+
+w="$out/work"
+mkdir -p "$w/src" "$w/platform"
+cp "$src"/platform/*.roc "$src/platform/host.c" "$src/platform/pinterm_host.h" "$w/platform/"
+cp "$src"/src/*.roc "$w/src/"
+# pinterm's platform header declares only its Linux targets; declare macOS
+# ones in the copy (same host archive, Archive output).
+perl -0pi -e 's/(\ttargets: \{\n\t\tinputs_dir: "targets\/",\n)/$1\t\tarm64mac: { inputs: ["libhost.a", app], output: Archive },\n\t\tx64mac: { inputs: ["libhost.a", app], output: Archive },\n/' "$w/platform/main.roc"
+bash "$src/tools/roc-glue" "$w/platform" || exit 1
+warn="-Wall -Wextra -Werror -std=c11 -D_GNU_SOURCE"
+for t in "$@"; do
+	read -r rt cct linkt <<<"$(spec "$t")"
+	[ -f "$out/pinterm-$t" ] && { echo "build-pinterm: $t already built" >&2; continue; }
+	mkdir -p "$w/platform/targets/$rt"
+	# shellcheck disable=SC2086
+	zig cc -target "$cct" $warn -O2 -fPIC -fvisibility=hidden -c "$w/platform/host.c" -o "$w/host-$rt.o" || exit 1
+	ar rcs "$w/platform/targets/$rt/libhost.a" "$w/host-$rt.o"
+	"$PINTERM_ROC" build "$w/src/main.roc" --opt=speed --target="$rt" --jobs=4 --no-cache --output="$w/lib-$rt.a" >"$w/roc-$rt.log" 2>&1 \
+		|| { echo "build-pinterm: roc build $t failed (see $w/roc-$rt.log)" >&2; exit 1; }
+	link_extra=-static; case "$linkt" in *macos*) link_extra="-include $here/macos_compat.h" ;; esac
+	# shellcheck disable=SC2086
+	zig cc -target "$linkt" $warn -O2 $link_extra -I"$w/platform" -I"$src/host" "$src"/host/*.c "$w/lib-$rt.a" -lm -o "$out/pinterm-$t.tmp" \
+		&& mv "$out/pinterm-$t.tmp" "$out/pinterm-$t" || exit 1
+	echo "built $out/pinterm-$t" >&2
+done
