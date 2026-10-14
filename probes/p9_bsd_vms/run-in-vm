@@ -37,7 +37,7 @@ if [ ! -f "$image" ]; then
 	got="$($sum "$part" | cut -d' ' -f1)"
 	[ "$got" = "$hash" ] || { echo "run-in-vm: checksum mismatch for $packed: $got" >&2; mv "$part" "$part.bad"; exit 1; }
 	case "$packed" in *.xz) xz -dc "$part" ;; *.gz) gzip -dc "$part" ;; esac >"$image.part.$$" && mv "$image.part.$$" "$image" || exit 1
-	mv "$part" "$cache/$packed"
+	rm -f -- "$part" # only the verified, decompressed image is kept
 fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/rocosmo-vm.XXXXXX")" || exit 1

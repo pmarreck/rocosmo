@@ -479,7 +479,7 @@ The container is 2,428,955 bytes; the raw layout would be 9,064,433. Each Roc co
 Problems found, all in pinterm rather than rocosmo:
 
 - Its host called `pipe2`, `F_SETPIPE_SZ` and `clock_nanosleep`, which macOS lacks; its platform header declared only Linux Roc targets; and `--about` reported "linux" on every OS. pinterm fixed all three in 3078199; the probe first used a forced-include shim and a patched header copy, and now uses neither. Rebuilt from 3078199: 2,384,499 bytes, and `--about` reports macos aarch64 and macos x86_64 on the Mac.
-- Still open in pinterm: its audio players (`pw-play`, `paplay`, `aplay`) do not exist on macOS, so the game is silent there; its Linux binaries carry debug info and are not stripped; and there is no Windows host.
+- Still open in pinterm: its Linux binaries carry debug info and are not stripped, and there is no Windows host. macOS sound arrived in pinterm 45e5ad7 (AudioToolbox loaded with `dlopen`); rebuilt 2026-10-14 with the dd/eval header of §13, the container is 2,393,481 bytes and `--about` is correct on Linux (`sh`, `oksh`), macOS native and Rosetta 2, and WSL2; the Windows stub still prints its WSL hint. Nobody has listened to the macOS audio yet.
 
 The game was run headless only; nobody has yet played it interactively from the container on macOS.
 

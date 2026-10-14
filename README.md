@@ -43,7 +43,7 @@ The app id is lowercase reverse-DNS (`org.example.tool`). `--app-id` sets it. Ot
 
 ## Test
 
-`./test` runs the core unit tests and probes P2–P9 (P8, the pinterm build, is run by hand; P1, a Cosmopolitan comparison, is retired). P9 boots FreeBSD and NetBSD release images under QEMU; the first run downloads and verifies about 1.9 GB of images into `~/.cache/rocosmo-vm`. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
+`./test` runs the core unit tests and probes P2–P9 (P8, the pinterm build, is run by hand; P1, a Cosmopolitan comparison, is retired). P9 boots FreeBSD and NetBSD release images under QEMU; the first run downloads about 1.8 GB of compressed images, checks them against the published checksums and keeps only the decompressed images (6.6 GB apparent size) in `~/.cache/rocosmo-vm`; delete that folder to reclaim the space. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
 
 ```sh
 ROCOSMO_MACOS_ARM64_HOST=...

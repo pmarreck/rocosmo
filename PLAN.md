@@ -57,7 +57,7 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 ## Work order (BDFN, 2026-10-13 8:12 PM EDT: signing goes last)
 
 1. [x] Pack a real app, pinterm (Roc game with a C terminal host), into one file: RESEARCH.md section 12 (2026-10-13 9:05 PM EDT).
-   - [ ] pinterm 45e5ad7 adds macOS sound (AudioToolbox via dlopen, no SDK). Rebuild the container, then update RESEARCH.md section 12's "silent on macOS" item; someone still has to listen on a Mac.
+   - [x] (2026-10-14 1:00 AM EDT; rebuilt and checked, copy on the Mac at ~/pinterm-rocosmo; listening still needed) pinterm 45e5ad7 adds macOS sound (AudioToolbox via dlopen, no SDK). Rebuild the container, then update RESEARCH.md section 12's "silent on macOS" item; someone still has to listen on a Mac.
 2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). FreeBSD/NetBSD: not possible; FreeBSD 15.1 and NetBSD 11.0 refuse to exec a memfd (EBADF, EINVAL), so they keep the cache path (RESEARCH.md §13, 2026-10-14 12:30 AM EDT).
 3. [x] Trim the Linux runtimes (libc-free, no stdio): 44-48 KB to 27.5 KB gzipped; RESEARCH.md section 11.x (2026-10-13 9:52 PM EDT).
 4. ~~`--assimilate`~~ declined (see above); the container never rewrites itself.
