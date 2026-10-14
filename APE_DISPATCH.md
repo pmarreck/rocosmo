@@ -135,6 +135,10 @@ Changed:
   safely through per-process temp names and an atomic rename, and a run
   re-extracts once if another version of the same app cleaned its entry
   between install and exec.
+- **Linux runs from memory.** With the zstd layout the Linux runtime decodes the
+  payload into a sealed memfd and `fexecve`s it, so nothing but the shared
+  runtime touches the disk. APE has no equivalent: its loader maps the ELF
+  image from the program file itself, which requires an uncompressed image.
 
 Added:
 

@@ -33,6 +33,8 @@ zig-out/bin/rocosmo-pack -v \
 
 Each container caches its payload under `<cache>/rocosmo/<app-id>/<hash>`, where `<cache>` is `$XDG_CACHE_HOME` if set, else `~/Library/Caches` on macOS and `~/.cache` elsewhere. Runtimes are shared in `<cache>/rocosmo/runtime/`. When an app installs a new payload it removes its own older entries and nothing else.
 
+On Linux the zstd layout does not cache the payload at all. The runtime rebuilds it into a sealed `memfd` and `fexecve`s it, so only the shared runtime (about 45 KB gzipped) is ever written to disk, once per machine. Payloads over 64 MiB still go to the cache: a cached file shares page cache between runs, while a memfd copy is private memory rebuilt on every start. If the kernel refuses (no `memfd_create`, `vm.memfd_noexec=2`, a security module), the runtime re-runs the container with `ROCOSMO_NO_MEMFD=1`, which selects the cache path; users can set that variable themselves too. It is inherited by the app's child processes. The raw layout has no runtime and always uses the cache.
+
 The app id is lowercase reverse-DNS (`org.example.tool`). `--app-id` sets it. Otherwise rocosmo-pack looks for a declaration embedded in the payloads: the literal text `ROCOSMO_APP_ID=` followed by the id and a `;`. Every payload that declares one must agree. Failing both, the id is `local.<output name>`. Declaring it from source:
 
 - **Roc:** the app provides `app_id : Str` (for example `app_id = "ROCOSMO_APP_ID=org.example.tool;"`), and the platform exposes it to the host so the linker keeps it (see `probes/p2_native_targets`).

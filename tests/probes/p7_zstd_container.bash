@@ -61,13 +61,27 @@ for shell in dash bash zsh busybox; do
 done
 field() { head -c 4096 "$app" | LC_ALL=C awk -F'[ =;]+' -v pat="$1" -v key="$2" 'index($0, pat ")") == 1 || index($0, pat "|") == 1 { for (i = 1; i < NF; i++) if ($i == key) { print $(i+1); exit } }'; }
 pid="$(field Linux-x86_64 i)" rid="$(field Linux-x86_64 h)"
-run_capture cmp "$p7/cache-dash/rocosmo/dev.rocosmo.probe/$pid" "$p2_out/app-x64musl"
-assert_rc0 "rebuilt linux x86_64 payload is byte-identical to the Roc output"
+# Linux runs the rebuilt payload from a memfd: only the shared runtime is cached.
+assert_eq "linux: the payload runs from memory; only the runtime is cached" "runtime/$rid" "$(cd "$p7/cache-dash/rocosmo" && find . -type f | sed 's|^\./||')"
 run_capture cmp "$p7/cache-dash/rocosmo/runtime/$rid" "$rt_dir/linux-x86_64"
 assert_rc0 "unpacked runtime is byte-identical to the built linux x86_64 runtime"
+run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p7/cache-dash" "$(command -v dash)" "$app" 20 a 'b c'
+assert_eq "warm memory run passes arguments through" "121" "$out"
+# ROCOSMO_NO_MEMFD=1 selects the cache path, as on other systems.
+run_capture env -i PATH="$tools" ROCOSMO_NO_MEMFD=1 XDG_CACHE_HOME="$p7/cache-file" "$(command -v dash)" "$app" 20
+assert_eq "ROCOSMO_NO_MEMFD=1: payload rebuilt into the cache and run" "121" "$out"
+run_capture cmp "$p7/cache-file/rocosmo/dev.rocosmo.probe/$pid" "$p2_out/app-x64musl"
+assert_rc0 "rebuilt linux x86_64 payload is byte-identical to the Roc output"
 nogz="$(minimal_path "$p7/bin-nogz" uname mkdir dd chmod mv rm)"
-run_capture env -i PATH="$nogz" XDG_CACHE_HOME="$p7/cache-dash" "$(command -v dash)" "$app" 20
-assert_eq "warm run needs neither gzip nor the runtime" "121" "$out"
+run_capture env -i PATH="$nogz" XDG_CACHE_HOME="$p7/cache-file" "$(command -v dash)" "$app" 20
+assert_eq "a cached payload is preferred: warm run needs neither gzip nor the runtime" "121" "$out"
+# Payloads above the memory limit (64 MiB) fall back to the cache by re-running
+# the container with ROCOSMO_NO_MEMFD=1; the same fallback covers memfd failures.
+{ cat "$p2_out/app-x64musl"; head -c $((65 * 1024 * 1024)) /dev/zero; } > "$p7/huge-x64musl"
+run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" --linux-x86_64 "$p7/huge-x64musl" --layout zstd --level 3 -o "$p7/huge"
+assert_rc0 "pack a 65 MiB payload"
+run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p7/cache-huge" "$(command -v dash)" "$p7/huge" 20
+assert_eq "a payload above the memory limit falls back to the cache and runs" "121 2" "$out $(find "$p7/cache-huge" -type f | wc -l)"
 
 # --- linux aarch64: runtime and payload under qemu-user (emulation) ---
 o="$(field Linux-aarch64 o)" n="$(field Linux-aarch64 n)"
@@ -95,7 +109,7 @@ shared="$p7/cache-shared"
 for i in $(seq 32); do env -i PATH="$tools" XDG_CACHE_HOME="$shared" "$(command -v dash)" "$app" 20 >"$p7/par.$i" 2>&1 & done
 wait
 bad=0; for i in $(seq 32); do [ "$(cat "$p7/par.$i")" = 121 ] || bad=$((bad + 1)); done
-assert_eq "32 concurrent cold starts: all correct; one runtime and one payload cached" "0 2" "$bad $(find "$shared" -type f | wc -l)"
+assert_eq "32 concurrent cold starts: all correct; one runtime cached, payload from memory" "0 1" "$bad $(find "$shared" -type f | wc -l)"
 
 # --- real hosts ---
 for how in "./rocosmo-p7 20" "sh ./rocosmo-p7 20"; do
@@ -112,4 +126,4 @@ if [ -n "$host" ]; then
 fi
 remote_run ROCOSMO_WINDOWS_X64_HOST rocosmo-p7.exe "$app" 20
 assert_eq "NATIVE Windows x86_64 real host, zstd layout (PE runs in place)" "121" "$(printf %s "$out" | tr -d '\r')"
-wsl_both_ways "zstd layout" "$app" rocosmo-p7wsl 2  # runtime + payload
+wsl_both_ways "zstd layout" "$app" rocosmo-p7wsl 1  # the runtime; the payload runs from memory

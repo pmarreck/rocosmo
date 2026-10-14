@@ -97,17 +97,23 @@ const script_tail = case_end ++ cache_dir ++
 	dd_range ++ " >\"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++
 	cleanup ++ "}\n" ++ exec_tail;
 /// zstd layout: o/n locate this OS/CPU's gzipped runtime, cached once per
-/// machine as $c/runtime/$h and shared by all apps; it reads the index at
-/// x/y and writes target $p to a temp file.
+/// machine as $c/runtime/$h and shared by all apps (r unpacks it); it reads
+/// the index at x/y and writes target $p to a temp file (z). On Linux the
+/// runtime instead runs the payload from a memfd (--exec), so only the runtime
+/// is cached; it re-runs the container with ROCOSMO_NO_MEMFD=1 to come back
+/// to the cache path when that is impossible or the payload is too large.
 const script_tail_zstd = case_end ++ cache_dir ++
-	"z(){ g=$c/runtime/$h\n" ++
-	"if [ ! -x \"$g\" ];then\n" ++
+	"r(){ g=$c/runtime/$h\n" ++
+	"[ -x \"$g\" ]&&return\n" ++
 	"mkdir -p \"$c/runtime\";u=$g.$$ b=$((n/4096)) r=$((n%4096))\n" ++
 	dd_range ++ "|gzip -dc >\"$u\"&&chmod 755 \"$u\"&&mv -f \"$u\" \"$g\"||{ rm -f \"$u\";echo \"$0: cannot unpack runtime\" >&2;exit 126;}\n" ++
-	"fi\n" ++
-	"t=$f.$$\n" ++
+	"}\n" ++
+	"k(){ " ++ cleanup ++ "}\n" ++
+	"z(){ r;t=$f.$$\n" ++
 	"\"$g\" \"$s\" $x $y $p \"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++
-	cleanup ++ "}\n" ++ exec_tail;
+	"k;}\n" ++
+	"[ -x \"$f\" ]||[ -n \"$ROCOSMO_NO_MEMFD\" ]||case $p in linux-*)r;k;exec \"$g\" --exec \"$s\" $x $y $p \"$0\" \"$@\";;esac\n" ++
+	exec_tail;
 
 fn shortHash(bytes: []const u8) [16]u8 {
 	var digest: [32]u8 = undefined;

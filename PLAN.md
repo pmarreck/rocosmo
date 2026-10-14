@@ -57,10 +57,11 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 
 ## Work order (BDFN, 2026-10-13 8:12 PM EDT: signing goes last)
 
-1. Trim the Linux runtimes (libc-free, no stdio).
-2. Run payloads from memory on Linux/FreeBSD/NetBSD for small payloads.
-3. `--assimilate`.
-4. Run the FreeBSD and NetBSD runtimes on real hosts or VMs; then OpenBSD.
-5. Windows ARM64 native relay; builds from Linux aarch64 and macOS x86_64 hosts.
-6. Real platform package and `rocosmo` wrapper command; shared per-arch code.
-7. Last: optional Apple Developer ID signing of the macOS payloads on a macOS build host (ad-hoc stays the default; the app id can serve as the signing identifier).
+1. Pack a real app, pinterm (Roc game with a C terminal host), into one file.
+2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). Next: FreeBSD/NetBSD (memfd_create since FreeBSD 13.0, NetBSD 11.0), untestable without hosts.
+3. Trim the Linux runtimes (libc-free, no stdio).
+4. `--assimilate`.
+5. Run the FreeBSD and NetBSD runtimes on real hosts or VMs; then OpenBSD.
+6. Windows ARM64 native relay; builds from Linux aarch64 and macOS x86_64 hosts.
+7. Real platform package and `rocosmo` wrapper command; shared per-arch code.
+8. Last: optional Apple Developer ID signing of the macOS payloads on a macOS build host (ad-hoc stays the default; the app id can serve as the signing identifier).
