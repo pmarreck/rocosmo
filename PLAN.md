@@ -65,4 +65,15 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 5. [x] FreeBSD and NetBSD runtimes in QEMU VMs (P9, 2026-10-14 12:20 AM EDT). Found and fixed: NetBSD sh and OpenBSD ksh reject NUL bytes (new dd/eval header line), ksh's `r` alias (function renamed). Next: OpenBSD (runtime needs `openbsd.syscalls` or a sysroot; no cloud-init image, so a serial-driven install).
 6. Windows ARM64 native relay; builds from Linux aarch64 and macOS x86_64 hosts.
 7. Real platform package and `rocosmo` wrapper command; shared per-arch code.
+## Publishing (BDFN, 2026-10-14 8:05 AM EDT)
+
+- [x] Pack the zstd index and frames without 4 KiB alignment padding; only the dd-copied runtimes stay aligned. pinterm: 2,393,481 to 2,382,443 bytes (2026-10-14 8:10 AM EDT).
+- [ ] MIT license.
+- [ ] One command that builds the container from a Roc project (pulls work-order item 7's `rocosmo` wrapper forward).
+- [ ] TECHNIQUE.md: a full write-up of the technique, linked from the README.
+- [ ] Attractive README showing the one-command use.
+- [ ] `rocosmo` command written in Roc on basic-cli: builds exactly the targets the app's platform declares, then packs them (BDFN, 2026-10-14 8:10 AM EDT).
+- [ ] Idea (BDFN, 2026-10-14 12:30 PM EDT): ship the Roc compiler itself as a rocosmo container that produces rocosmo containers.
+- [ ] Audit all commits and tracked files for private details before the first public push; push only after BDFN picks the remote.
+
 8. Last: optional Apple Developer ID signing of the macOS payloads on a macOS build host (ad-hoc stays the default; the app id can serve as the signing identifier).

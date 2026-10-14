@@ -23,6 +23,22 @@ Use flake.nix-controlled dependencies and experiments. The owner explicitly perm
 
 Keep compiler experiments isolated. Do not change fleet toolchains, system configurations, or other projects. Public-facing content must exclude private machine names, paths, endpoints and credentials. No public publication or upstream contact is required for this research phase.
 
+## Responsibility boundary
+
+rocosmo packages what a project already builds. It never ports a project to a platform. (BDFN, 2026-10-14)
+
+The project owns:
+- its source code and its platform/host code for each OS, including any Windows-specific host;
+- the set of targets it supports, as its own build declares them (for Roc, the `targets:` block of the platform header);
+- its app id and, later, its signing identity.
+
+rocosmo owns:
+- the container format: header, shell dispatcher, payload cache, per-OS/CPU runtimes and the packer;
+- building exactly the targets the project declares and packing them, adding none and dropping none;
+- mapping a project's target names onto container slots, including choosing among duplicates for one OS/CPU;
+- whatever the container format itself requires;
+- proving that each container runs on every OS/CPU it claims.
+
 ## Evidence and stopping point
 
 The initial milestone is a sourced report with a host-by-target matrix, actual versus proposed capabilities, architecture options, licensing/distribution constraints, reproducible experiment records where feasible, and a scoped implementation proposal. A bounded failed experiment with a precise cause is useful evidence; an untested target must remain marked untested. Do not claim feasibility solely because a hello-world compiler stage succeeds.
