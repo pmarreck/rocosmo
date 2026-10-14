@@ -16,12 +16,20 @@ pub const Status = enum(c_int) { ok = 0, not_pe = 1, unsupported_pe = 2, headers
 
 const gpa = std.heap.c_allocator;
 
+/// The optional PE argument: NULL with length 0 means "no Windows target"
+/// (POSIX-only format); NULL with a nonzero length is a caller error.
+fn peArg(pe: ?[*]const u8, pe_len: usize) ?struct { pe: ?[]const u8 } {
+	if (pe) |p| return .{ .pe = p[0..pe_len] };
+	return if (pe_len == 0) .{ .pe = null } else null;
+}
+
 /// Build a polyglot container from a Windows PE and per-OS/arch payloads.
+/// pe == NULL with pe_len == 0 selects the POSIX-only format (no Windows).
 export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payload, count: usize, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
 	const idp = id orelse return .invalid_argument;
 	const o = out orelse return .invalid_argument;
 	const ol = out_len orelse return .invalid_argument;
-	const pe_ptr = pe orelse return .invalid_argument;
+	const pe_slice = peArg(pe, pe_len) orelse return .invalid_argument;
 	if (count > 0 and payloads == null) return .invalid_argument;
 	const list = gpa.alloc(pack.Payload, count) catch return .out_of_memory;
 	defer gpa.free(list);
@@ -29,7 +37,7 @@ export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payl
 		const src = payloads.?[i];
 		p.* = .{ .pattern = src.pattern[0..src.pattern_len], .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{} };
 	}
-	const result = pack.pack(gpa, pe_ptr[0..pe_len], list, idp[0..id_len]) catch |e| return switch (e) {
+	const result = pack.pack(gpa, pe_slice.pe, list, idp[0..id_len]) catch |e| return switch (e) {
 		error.InvalidAppId => .invalid_app_id,
 		error.NotPe => .not_pe,
 		error.UnsupportedPe => .unsupported_pe,
@@ -109,7 +117,7 @@ export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Tar
 	const idp = id orelse return .invalid_argument;
 	const o = out orelse return .invalid_argument;
 	const ol = out_len orelse return .invalid_argument;
-	const pe_ptr = pe orelse return .invalid_argument;
+	const pe_slice = peArg(pe, pe_len) orelse return .invalid_argument;
 	if (count > 0 and list == null) return .invalid_argument;
 	if (level < 1 or level > 22) return .invalid_argument;
 	const ts = gpa.alloc(pack.Target, count) catch return .out_of_memory;
@@ -120,7 +128,7 @@ export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Tar
 		const k = targets.find(name) orelse return .unknown_target;
 		t.* = .{ .name = k.name, .pattern = k.pattern, .arch = k.arch, .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{}, .runtime_gz = runtimeFor(k.name) };
 	}
-	const result = pack.packZstd(gpa, pe_ptr[0..pe_len], ts, level, idp[0..id_len]) catch |e| return switch (e) {
+	const result = pack.packZstd(gpa, pe_slice.pe, ts, level, idp[0..id_len]) catch |e| return switch (e) {
 		error.InvalidAppId => .invalid_app_id,
 		error.NotPe => .not_pe,
 		error.UnsupportedPe => .unsupported_pe,

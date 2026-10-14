@@ -141,3 +141,35 @@ if [ -n "$host" ]; then
 else
 	fail "macOS default cache location" "ROCOSMO_MACOS_ARM64_HOST not set"
 fi
+
+# --- POSIX-only format: no Windows target, so the file is a #!/bin/sh script ---
+run_capture "$pack_bin" --linux-x86_64 "$p2_out/app-x64musl" --linux-aarch64 "$p2_out/app-arm64musl" \
+	--macos-x86_64 "$p2_out/app-x64mac" --macos-arm64 "$p2_out/app-arm64mac" --layout raw -o "$p3/app-posix"
+assert_rc0 "pack a POSIX-only container (no --windows-x86_64)"
+posix="$p3/app-posix"
+assert_eq "the POSIX-only container starts with #!/bin/sh" "#!/bin/sh" "$(head -n 1 "$posix")"
+for shell in dash bash zsh busybox oksh mksh; do
+	if [ "$shell" = busybox ]; then cmd=("${ROCOSMO_BUSYBOX:?}" sh "$posix" 20); else cmd=("$shell" "$posix" 20); fi
+	run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p3/cache-posix-$shell" "$(command -v "${cmd[0]}")" "${cmd[@]:1}"
+	assert_eq "POSIX-only container via $shell" "121" "$out"
+	[ -z "$err" ] || fail "POSIX-only $shell run is silent on stderr" "$err"
+done
+
+# A raw execve has no ENOEXEC fallback: the shebang makes the POSIX-only file
+# run, while the universal file (MZ at offset 0) cannot be exec'd this way.
+p3_execve="$p3/execve"
+run_capture zig cc -O2 "$ROOT/probes/p3_container/execve.c" -o "$p3_execve"
+assert_rc0 "the raw-execve launcher builds"
+run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p3/cache-execve" "$p3/execve" "$posix" 20
+assert_eq "raw execve runs the POSIX-only container" "121" "$out"
+run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p3/cache-execve" "$p3/execve" "$app" 20
+assert_eq "raw execve of the universal container fails with ENOEXEC (documented limit)" "execve: Exec format error" "$out"
+
+host="${ROCOSMO_MACOS_ARM64_HOST-}"
+if [ -n "$host" ]; then
+	scp -q "${SSH_OPTS[@]}" "$posix" "$host:rocosmo-p3posix"
+	run_capture ssh "${SSH_OPTS[@]}" "$host" 'c="${TMPDIR:-/tmp}/rocosmo-p3posix-cache"; rm -rf "$c"; XDG_CACHE_HOME="$c" ./rocosmo-p3posix 20'
+	assert_eq "NATIVE macOS arm64 runs the POSIX-only container directly" "121" "$out"
+else
+	fail "NATIVE macOS arm64 POSIX-only run" "ROCOSMO_MACOS_ARM64_HOST not set"
+fi

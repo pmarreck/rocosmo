@@ -153,3 +153,17 @@ fi
 remote_run ROCOSMO_WINDOWS_X64_HOST rocosmo-p7.exe "$app" 20
 assert_eq "NATIVE Windows x86_64 real host, zstd layout (PE runs in place)" "121" "$(printf %s "$out" | tr -d '\r')"
 wsl_both_ways "zstd layout" "$app" rocosmo-p7wsl 1  # the runtime; the payload runs from memory
+
+# --- POSIX-only zstd container (no Windows target) ---
+run_capture "$pack_bin" "${targets[@]}" --layout zstd -o "$p7/app-posix"
+assert_rc0 "pack a POSIX-only zstd container"
+assert_eq "the POSIX-only zstd container starts with #!/bin/sh" "#!/bin/sh" "$(head -n 1 "$p7/app-posix")"
+p3_execve="${p3_execve:-$p7/execve}"
+[ -x "$p3_execve" ] || zig cc -O2 "$ROOT/probes/p3_container/execve.c" -o "$p3_execve"
+run_capture env -i PATH="$tools" XDG_CACHE_HOME="$p7/cache-posix" "$p3_execve" "$p7/app-posix" 20 a 'b c'
+assert_eq "raw execve runs the POSIX-only zstd container" "121" "$out"
+assert_eq "POSIX-only on Linux: the payload runs from memory; only the runtime is cached" "1" "$(find "$p7/cache-posix" -type f | wc -l)"
+run_capture env -i PATH="$tools" ROCOSMO_NO_MEMFD=1 XDG_CACHE_HOME="$p7/cache-posix-file" "$(command -v dash)" "$p7/app-posix" 20
+assert_eq "POSIX-only with ROCOSMO_NO_MEMFD=1: rebuilt into the cache and run" "121 2" "$out $(find "$p7/cache-posix-file" -type f | wc -l)"
+run_capture "$pack_bin" -o "$p7/x"
+assert_eq "no payloads at all is a usage error" "2" "$rc"

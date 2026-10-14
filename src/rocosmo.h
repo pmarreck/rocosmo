@@ -11,7 +11,8 @@ typedef struct {
 	size_t bytes_len;
 } rocosmo_payload;
 
-/* Returns 0 on success and stores a library-owned buffer in *out. */
+/* Returns 0 on success and stores a library-owned buffer in *out.
+ * pe = NULL, pe_len = 0: POSIX-only format, a #!/bin/sh script with no PE. */
 /* app_id: cache namespace (see rocosmo_resolve_app_id). */
 int rocosmo_pack(const uint8_t *pe, size_t pe_len, const rocosmo_payload *payloads, size_t count,
 	const uint8_t *app_id, size_t app_id_len, uint8_t **out, size_t *out_len);

@@ -45,6 +45,11 @@ stored between 0x40 and the 64-byte-aligned `e_lfanew`, so no shell parses line
 2. The Windows loader still reads only `MZ` and `e_lfanew`. RESEARCH.md §13 has
 the evidence.
 
+**rocosmo has a second format (2026-10-14).** A container with no Windows
+target needs no PE, so it starts with `#!/bin/sh` and evals its script region
+from offset 0x80 with the same `dd` line. The shebang lets a raw `execve(2)`
+run it, which the `MZ` format cannot offer. RESEARCH.md §14 compares the two.
+
 When a file without `#!` fails `execve` with `ENOEXEC`, POSIX shells, glibc
 `execvp` and Cosmopolitan's own `execve` re-run it with `/bin/sh`. A raw
 `execve(2)` from a non-shell parent does not, so APE offers `--assimilate`,

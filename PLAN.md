@@ -68,6 +68,7 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 ## Publishing (BDFN, 2026-10-14 8:05 AM EDT)
 
 - [x] Pack the zstd index and frames without 4 KiB alignment padding; only the dd-copied runtimes stay aligned. pinterm: 2,393,481 to 2,382,443 bytes (2026-10-14 8:10 AM EDT).
+- [x] Two formats: universal (MZ/PE + sh) and POSIX-only (#!/bin/sh, no PE) when no Windows target is given; raw execve runs the POSIX-only one. RESEARCH.md §14 (2026-10-14 1:05 PM EDT).
 - [ ] MIT license.
 - [ ] One command that builds the container from a Roc project (pulls work-order item 7's `rocosmo` wrapper forward).
 - [ ] TECHNIQUE.md: a full write-up of the technique, linked from the README.

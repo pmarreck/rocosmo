@@ -14,3 +14,7 @@ layout=raw
 run raw sh ./app-raw "a b" c
 layout=zstd
 if command -v ksh >/dev/null; then run ksh ksh ./app-zstd k; fi
+layout=posix
+run posix ./app-posix p
+run posix-sh sh ./app-posix q
+if command -v ksh >/dev/null; then run posix-ksh ksh ./app-posix r; fi

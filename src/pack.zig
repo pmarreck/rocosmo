@@ -63,9 +63,34 @@ pub const pe_body_name = "windows-x86_64-body";
 const dos_line_head = "MZ=;eval \"$(dd if=\"$0\" bs=64 skip=1 count=";
 const dos_count_width = 3; // up to 999 blocks: a 64 KB script
 const dos_line_tail = " 2>/dev/null)\"\n";
+/// POSIX-only format (no Windows target): a #!/bin/sh line, so a raw execve
+/// runs the file too, then the same trampoline as line 2. The two lines need
+/// more than 64 bytes, so this head is 128 and the script region starts there.
+const posix_line_head = "#!/bin/sh\neval \"$(dd if=\"$0\" bs=64 skip=2 count=";
 comptime {
 	if (dos_line_head.len + dos_count_width + dos_line_tail.len > 0x3c) @compileError("line 1 overlaps e_lfanew");
+	if (posix_line_head.len + dos_count_width + dos_line_tail.len > 0x80) @compileError("line 2 overlaps the script region");
 }
+
+/// universal: a Windows PE whose DOS stub area holds the dispatcher.
+/// posix: a plain shell script, for containers without a Windows target.
+const Format = enum {
+	universal,
+	posix,
+	fn head(f: Format) []const u8 {
+		return switch (f) {
+			.universal => dos_line_head,
+			.posix => posix_line_head,
+		};
+	}
+	/// Offset of the evaluated script region (the trampoline's dd skip).
+	fn start(f: Format) usize {
+		return switch (f) {
+			.universal => 0x40,
+			.posix => 0x80,
+		};
+	}
+};
 const script_block = 64;
 const script_start =
 	"s=$(command -v \"$0\")||s=$0\n" ++
@@ -132,28 +157,35 @@ fn shortHash(bytes: []const u8) [16]u8 {
 	return std.fmt.bytesToHex(digest[0..8], .lower);
 }
 
-/// DOS prefix, cache-home logic and the app id (validated: safe as shell text).
-fn writeStart(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8) !void {
-	try writeDosPrefix(list, gpa);
+/// Trampoline prefix, cache-home logic and the app id (validated: safe as shell text).
+fn writeStart(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format, id: []const u8) !void {
+	try writePrefix(list, gpa, format);
 	try list.appendSlice(gpa, script_start);
 	try list.appendSlice(gpa, "a=");
 	try list.appendSlice(gpa, id);
 	try list.append(gpa, '\n');
 }
 
-fn writeDosPrefix(list: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
-	try list.appendSlice(gpa, dos_line_head);
+/// The first 64 bytes: the trampoline line, padded. The universal format
+/// ends them with e_lfanew, patched later.
+fn writePrefix(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format) !void {
+	try list.appendSlice(gpa, format.head());
 	try list.appendNTimes(gpa, ' ', dos_count_width); // block count, patched by writeFront
 	try list.appendSlice(gpa, dos_line_tail);
-	while (list.items.len < 0x3c) try list.append(gpa, ' ');
-	try list.appendSlice(gpa, "\x00\x00\x00\x00"); // e_lfanew, patched later
+	switch (format) {
+		.universal => {
+			while (list.items.len < 0x3c) try list.append(gpa, ' ');
+			try list.appendSlice(gpa, "\x00\x00\x00\x00");
+		},
+		.posix => while (list.items.len < Format.posix.start()) try list.append(gpa, ' '),
+	}
 }
 
 /// Builds the shell dispatcher that sits in the DOS stub area. Numbers are
 /// right-padded to a fixed width so the script length does not depend on them
 /// (leading zeros would be octal in shell arithmetic).
-fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8, payloads: []const Payload, offsets: []const usize) !void {
-	try writeStart(list, gpa, id);
+fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format, id: []const u8, payloads: []const Payload, offsets: []const usize) !void {
+	try writeStart(list, gpa, format, id);
 	try list.appendSlice(gpa, case_start);
 	for (payloads, offsets) |p, off| {
 		try list.appendSlice(gpa, p.pattern);
@@ -166,8 +198,8 @@ fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8,
 	try list.appendSlice(gpa, script_tail);
 }
 
-fn writeScriptZstd(list: *std.ArrayList(u8), gpa: std.mem.Allocator, id: []const u8, targets: []const Target, rt_offsets: []const usize, idx_off: usize, idx_len: usize) !void {
-	try writeStart(list, gpa, id);
+fn writeScriptZstd(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format, id: []const u8, targets: []const Target, rt_offsets: []const usize, idx_off: usize, idx_len: usize) !void {
+	try writeStart(list, gpa, format, id);
 	try appendPadded(list, gpa, "x=", idx_off);
 	try appendPadded(list, gpa, " y=", idx_len);
 	try list.append(gpa, '\n');
@@ -243,37 +275,46 @@ fn bump32(b: []u8, o: usize, delta: usize) void {
 	if (v != 0) wr32(b, o, v + delta);
 }
 
-/// Where the relocated PE headers and body land after a script of `script_len`.
-const Header = struct { lfanew: usize, soh: usize, body_end: usize };
+/// Where the script region ends and, in the universal format, where the
+/// relocated PE headers and body land after a script of `script_len`.
+const Header = struct { script_end: usize, soh: usize, body_end: usize };
 
-fn headerLayout(info: PeInfo, pe_len: usize, script_len: usize) PackError!Header {
-	// Whole 64-byte blocks, so line 1's dd reads exactly the script region.
-	const lfanew = alignUp(script_len, script_block);
-	if ((lfanew - 0x40) / script_block >= std.math.pow(usize, 10, dos_count_width)) return error.HeadersOverflow;
+fn headerLayout(pe_info: ?PeInfo, pe_len: usize, script_len: usize) PackError!Header {
+	// Whole 64-byte blocks, so the trampoline's dd reads exactly the script region.
+	const script_end = alignUp(script_len, script_block);
+	const format: Format = if (pe_info == null) .posix else .universal;
+	if ((script_end - format.start()) / script_block >= std.math.pow(usize, 10, dos_count_width)) return error.HeadersOverflow;
+	const info = pe_info orelse return .{ .script_end = script_end, .soh = script_end, .body_end = script_end };
+	const lfanew = script_end;
 	const hdr_len = 24 + info.opt_size + 40 * info.nsec;
 	const soh = @max(alignUp(lfanew + hdr_len, info.file_align), info.soh);
 	if (soh > info.min_va) return error.HeadersOverflow;
-	return .{ .lfanew = lfanew, .soh = soh, .body_end = soh + (pe_len - info.soh) };
+	return .{ .script_end = script_end, .soh = soh, .body_end = soh + (pe_len - info.soh) };
 }
 
 /// Writes [script][relocated PE headers][PE body] into the front of `out`.
 /// The Windows loader reads only e_magic and e_lfanew from the DOS header, so
-/// the DOS stub region carries the POSIX shell dispatcher instead.
-fn writeFront(out: []u8, pe: []const u8, info: PeInfo, script: []const u8, h: Header) void {
+/// the DOS stub region carries the POSIX shell dispatcher instead. Without a
+/// PE (POSIX-only format) only the script is written.
+fn writeFront(out: []u8, pe_in: ?[]const u8, pe_info: ?PeInfo, script: []const u8, h: Header) void {
+	const format: Format = if (pe_in == null) .posix else .universal;
+	@memcpy(out[0..script.len], script);
+	@memset(out[script.len..h.script_end], '\n');
+	_ = std.fmt.bufPrint(out[format.head().len..][0..dos_count_width], "{d}", .{(h.script_end - format.start()) / script_block}) catch unreachable;
+	const pe = pe_in orelse return;
+	const info = pe_info.?;
 	const hdr_len = 24 + info.opt_size + 40 * info.nsec;
 	const delta = h.soh - info.soh;
-	@memcpy(out[0..script.len], script);
-	@memset(out[script.len..h.lfanew], '\n');
-	_ = std.fmt.bufPrint(out[dos_line_head.len..][0..dos_count_width], "{d}", .{(h.lfanew - 0x40) / script_block}) catch unreachable;
-	wr32(out, 0x3c, h.lfanew);
-	@memcpy(out[h.lfanew..][0..hdr_len], pe[info.lfanew..][0..hdr_len]);
+	const lfanew = h.script_end;
+	wr32(out, 0x3c, lfanew);
+	@memcpy(out[lfanew..][0..hdr_len], pe[info.lfanew..][0..hdr_len]);
 	@memcpy(out[h.soh..h.body_end], pe[info.soh..]);
 
-	const opt = h.lfanew + 24;
+	const opt = lfanew + 24;
 	const sec = opt + info.opt_size;
 	wr32(out, opt + 60, h.soh); // SizeOfHeaders
 	wr32(out, opt + 64, 0); // CheckSum: not required for executables
-	bump32(out, h.lfanew + 12, delta); // PointerToSymbolTable
+	bump32(out, lfanew + 12, delta); // PointerToSymbolTable
 	for (0..info.nsec) |i| {
 		const s = sec + 40 * i;
 		bump32(out, s + 20, delta); // PointerToRawData
@@ -286,8 +327,10 @@ fn writeFront(out: []u8, pe: []const u8, info: PeInfo, script: []const u8, h: He
 }
 
 /// Raw layout: [script+relocated PE headers][PE body shifted][aligned payloads].
-pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload, id: []const u8) PackError![]u8 {
-	const info = try parsePe(pe);
+/// `pe` null selects the POSIX-only format: [#!/bin/sh script][aligned payloads].
+pub fn pack(gpa: std.mem.Allocator, pe: ?[]const u8, payloads: []const Payload, id: []const u8) PackError![]u8 {
+	const info: ?PeInfo = if (pe) |p| try parsePe(p) else null;
+	const format: Format = if (pe == null) .posix else .universal;
 	if (!app_id.valid(id)) return error.InvalidAppId;
 	for (payloads) |p| if (!validPattern(p.pattern)) return error.InvalidPattern;
 	const offsets = try gpa.alloc(usize, payloads.len);
@@ -296,8 +339,8 @@ pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload, i
 
 	var probe: std.ArrayList(u8) = .empty;
 	defer probe.deinit(gpa);
-	try writeScript(&probe, gpa, id, payloads, offsets);
-	const h = try headerLayout(info, pe.len, probe.items.len);
+	try writeScript(&probe, gpa, format, id, payloads, offsets);
+	const h = try headerLayout(info, if (pe) |p| p.len else 0, probe.items.len);
 
 	var cursor = alignUp(h.body_end, payload_align);
 	for (payloads, offsets) |p, *off| {
@@ -308,7 +351,7 @@ pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload, i
 
 	var script: std.ArrayList(u8) = .empty;
 	defer script.deinit(gpa);
-	try writeScript(&script, gpa, id, payloads, offsets);
+	try writeScript(&script, gpa, format, id, payloads, offsets);
 	std.debug.assert(script.items.len == probe.items.len);
 
 	const out = try gpa.alloc(u8, total);
@@ -323,9 +366,12 @@ pub fn pack(gpa: std.mem.Allocator, pe: []const u8, payloads: []const Payload, i
 /// same-CPU target and (x86_64 only) the Windows PE body; deltas across CPUs
 /// are not tried because they measured 91-100% of a whole frame (RESEARCH.md
 /// section 10). layout.optimal then picks roots and references exhaustively.
-/// Output: [script][PE][runtimes][index][frames], blobs 4 KiB aligned.
-pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target, level: i32, id: []const u8) PackError![]u8 {
-	const info = try parsePe(pe);
+/// Output: [script][PE][runtimes][index][frames]; only the runtimes, which the
+/// shell copies with dd, are 4 KiB aligned. `pe` null selects the POSIX-only
+/// format: no PE, and index entry 0 (the PE body) is empty and never referenced.
+pub fn packZstd(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target, level: i32, id: []const u8) PackError![]u8 {
+	const info: ?PeInfo = if (pe) |p| try parsePe(p) else null;
+	const format: Format = if (pe == null) .posix else .universal;
 	if (!app_id.valid(id)) return error.InvalidAppId;
 	for (targets) |t| {
 		if (!validPattern(t.pattern)) return error.InvalidPattern;
@@ -333,7 +379,7 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target,
 	}
 	const n = targets.len;
 	if (n > layout.max_targets) return error.TooManyTargets;
-	const body = pe[info.soh..];
+	const body: []const u8 = if (pe) |p| p[info.?.soh..] else &.{};
 
 	// Candidate frames: whole[t], and delta[r * n + t] with r == n meaning the PE body.
 	const whole = try gpa.alloc([]u8, n);
@@ -353,7 +399,7 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target,
 		whole_done += 1;
 		for (0..n + 1) |r| {
 			const ref: []const u8 = if (r == n) body else targets[r].bytes;
-			const usable = if (r == n) t.arch == .x86_64 else (r != ti and targets[r].arch == t.arch);
+			const usable = if (r == n) pe != null and t.arch == .x86_64 else (r != ti and targets[r].arch == t.arch);
 			if (usable) delta[r * n + ti] = zenc.encode(gpa, t.bytes, ref, level) catch |e| return mapEnc(e);
 		}
 	}
@@ -386,8 +432,8 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target,
 	@memset(rt_offsets, 0);
 	var probe: std.ArrayList(u8) = .empty;
 	defer probe.deinit(gpa);
-	try writeScriptZstd(&probe, gpa, id, targets, rt_offsets, 0, idx_len);
-	const h = try headerLayout(info, pe.len, probe.items.len);
+	try writeScriptZstd(&probe, gpa, format, id, targets, rt_offsets, 0, idx_len);
+	const h = try headerLayout(info, if (pe) |p| p.len else 0, probe.items.len);
 
 	// Only the runtime blobs are aligned: the shell copies them with 4 KiB dd
 	// blocks. The runtime preads the index and frames, so those pack tightly.
@@ -412,7 +458,7 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: []const u8, targets: []const Target,
 	std.debug.assert(idx.len == idx_len);
 	var script: std.ArrayList(u8) = .empty;
 	defer script.deinit(gpa);
-	try writeScriptZstd(&script, gpa, id, targets, rt_offsets, idx_off, idx_len);
+	try writeScriptZstd(&script, gpa, format, id, targets, rt_offsets, idx_off, idx_len);
 	std.debug.assert(script.items.len == probe.items.len);
 
 	const out = try gpa.alloc(u8, total);
@@ -527,20 +573,43 @@ fn rd16(b: []const u8, o: usize) u16 {
 	return std.mem.readInt(u16, b[o..][0..2], .little);
 }
 
-/// Independent reading of the shell entry: line 1 must end inside the DOS
-/// header's free bytes (before e_lfanew at 0x3c), hold no NUL, and dd exactly
-/// the NUL-free script region [0x40, e_lfanew) for eval. Shells that reject
-/// NUL bytes (NetBSD sh, OpenBSD ksh) then never read e_lfanew's zero bytes.
+/// The evaluated script region [start, end), read from the trampoline's
+/// `dd bs=64 skip=S count=N` in the first 128 bytes (both formats).
+fn scriptRegion(out: []const u8) struct { start: usize, end: usize } {
+	const head = out[0..@min(out.len, 0x80)];
+	const at = std.mem.indexOf(u8, head, "bs=64 skip=") orelse return .{ .start = 0, .end = 0 };
+	const skip = std.fmt.parseInt(usize, std.mem.sliceTo(head[at + 11 ..], ' '), 10) catch return .{ .start = 0, .end = 0 };
+	const c = std.mem.indexOfPos(u8, head, at, "count=") orelse return .{ .start = 0, .end = 0 };
+	const count = std.fmt.parseInt(usize, std.mem.sliceTo(head[c + 6 ..], ' '), 10) catch return .{ .start = 0, .end = 0 };
+	return .{ .start = 64 * skip, .end = 64 * (skip + count) };
+}
+
+fn scriptEnd(out: []const u8) usize {
+	return scriptRegion(out).end;
+}
+
+/// Independent reading of the shell entry. Universal format: line 1 must end
+/// inside the DOS header's free bytes (before e_lfanew at 0x3c), hold no NUL,
+/// and dd exactly the NUL-free script region [0x40, e_lfanew) for eval, so
+/// shells that reject NUL bytes (NetBSD sh, OpenBSD ksh) never read e_lfanew's
+/// zero bytes. POSIX-only format: line 1 is "#!/bin/sh" and line 2, inside
+/// the NUL-free first 128 bytes, evals the region [0x80, end).
 fn expectTrampoline(out: []const u8) !void {
-	try testing.expectEqualStrings("MZ", out[0..2]);
-	const nl = std.mem.indexOfScalar(u8, out[0..0x3c], '\n') orelse return error.TestLineOneTooLong;
-	const line = out[0..nl];
-	try testing.expect(std.mem.indexOfScalar(u8, line, 0) == null);
-	const at = std.mem.indexOf(u8, line, "bs=64 skip=1 count=") orelse return error.TestNoDd;
-	const count = try std.fmt.parseInt(usize, std.mem.sliceTo(line[at + 19 ..], ' '), 10);
-	const lfanew = rd32(out, 0x3c);
-	try testing.expectEqual(@as(usize, lfanew), 64 + 64 * count);
-	const script = out[0x40..lfanew];
+	const r = scriptRegion(out);
+	try testing.expect(r.end > r.start);
+	try testing.expect(std.mem.indexOfScalar(u8, out[0..0x3c], 0) == null);
+	if (std.mem.startsWith(u8, out, "MZ")) {
+		const nl = std.mem.indexOfScalar(u8, out[0..0x3c], '\n') orelse return error.TestLineOneTooLong;
+		try testing.expect(std.mem.indexOf(u8, out[0..nl], "bs=64 skip=1 count=") != null);
+		try testing.expectEqual(@as(usize, rd32(out, 0x3c)), r.end);
+	} else {
+		try testing.expect(std.mem.startsWith(u8, out, "#!/bin/sh\n"));
+		const nl = std.mem.indexOfScalarPos(u8, out[0..0x80], 10, '\n') orelse return error.TestLineTwoTooLong;
+		try testing.expect(std.mem.startsWith(u8, out[10..nl], "eval "));
+		try testing.expect(std.mem.indexOf(u8, out[10..nl], "bs=64 skip=2 count=") != null);
+		try testing.expect(std.mem.indexOfScalar(u8, out[0..0x80], 0) == null);
+	}
+	const script = out[r.start..r.end];
 	try testing.expect(std.mem.indexOfScalar(u8, script, 0) == null);
 	try testing.expect(std.mem.indexOf(u8, script, "exit 127\n") != null);
 }
@@ -550,7 +619,7 @@ fn expectTrampoline(out: []const u8) !void {
 const ksh_aliases = [_][]const u8{ "autoload", "command", "fc", "functions", "hash", "history", "integer", "local", "login", "nohup", "r", "stop", "suspend", "type" };
 
 fn expectNoAliasedFunctions(out: []const u8) !void {
-	const script = out[0x40..rd32(out, 0x3c)];
+	const script = out[scriptRegion(out).start..scriptEnd(out)];
 	var defined: usize = 0;
 	var lines = std.mem.splitScalar(u8, script, '\n');
 	while (lines.next()) |l| {
@@ -602,8 +671,8 @@ test "e_lfanew locates a PE header whose sections hold the original bytes" {
 /// Parse "pattern) ... off=N len=M" lines back out of the script: an
 /// independent reading of what the shell will execute.
 fn scriptEntry(out: []const u8, pattern: []const u8) ?struct { off: usize, len: usize } {
-	const lfanew = rd32(out, 0x3c);
-	const text = out[0..lfanew];
+	const end = scriptEnd(out);
+	const text = out[0..end];
 	const at = std.mem.indexOf(u8, text, pattern) orelse return null;
 	const line_end = std.mem.indexOfScalarPos(u8, text, at, '\n') orelse return null;
 	const line = text[at..line_end];
@@ -688,7 +757,7 @@ const zdec = @import("zstd_decode.zig");
 
 /// Value of `key=` on the script line that starts with `pattern`.
 fn scriptField(out: []const u8, pattern: []const u8, key: []const u8) ?[]const u8 {
-	const text = out[0..rd32(out, 0x3c)];
+	const text = out[0..scriptEnd(out)];
 	var lines = std.mem.splitScalar(u8, text, '\n');
 	while (lines.next()) |line| {
 		if (!std.mem.startsWith(u8, line, pattern) or line.len <= pattern.len or line[pattern.len] != ')') continue;
@@ -705,7 +774,7 @@ fn fieldIn(line: []const u8, key: []const u8) ?[]const u8 {
 
 /// Global `key=` assignment on its own line (the index location).
 fn scriptGlobal(out: []const u8, key: []const u8) ?u64 {
-	const text = out[0..rd32(out, 0x3c)];
+	const text = out[0..scriptEnd(out)];
 	var lines = std.mem.splitScalar(u8, text, '\n');
 	while (lines.next()) |line| {
 		if (std.mem.indexOfScalar(u8, line, ')') != null) continue;
@@ -890,9 +959,53 @@ test "the script names the app id, and an invalid id is refused before packing" 
 	defer gpa.free(pe);
 	const out = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "abc" }}, "llc.mecha.validate");
 	defer gpa.free(out);
-	try testing.expect(std.mem.indexOf(u8, out[0..rd32(out, 0x3c)], "\na=llc.mecha.validate\n") != null);
+	try testing.expect(std.mem.indexOf(u8, out[0..scriptEnd(out)], "\na=llc.mecha.validate\n") != null);
 	for ([_][]const u8{ "", "app", "a.b;x", "A.B", "a b.c", "a.b$(id)" }) |bad| {
 		try testing.expectError(error.InvalidAppId, pack(gpa, pe, &.{}, bad));
 		try testing.expectError(error.InvalidAppId, packZstd(gpa, pe, &.{}, 3, bad));
 	}
+}
+
+// ---------------------------------------------------------------------------
+// POSIX-only format: no Windows target, so no PE. The file is a #!/bin/sh
+// script, which lets a raw execve run it with no ENOEXEC fallback.
+
+test "POSIX-only raw layout is a #!/bin/sh script with every payload stored byte-for-byte" {
+	const gpa = testing.allocator;
+	var big: [10000]u8 = undefined;
+	for (&big, 0..) |*b, i| b.* = @truncate(i *% 31 +% 7);
+	const payloads = [_]Payload{
+		.{ .pattern = "Linux-x86_64|Linux-amd64", .bytes = &big },
+		.{ .pattern = "Darwin-arm64", .bytes = "tiny" },
+	};
+	const out = try pack(gpa, null, &payloads, test_id);
+	defer gpa.free(out);
+	try expectTrampoline(out);
+	try expectNoAliasedFunctions(out);
+	try testing.expect(std.mem.indexOf(u8, out[0..scriptEnd(out)], "MZ") == null);
+	for (payloads) |p| {
+		const e = scriptEntry(out, p.pattern) orelse return error.TestMissingEntry;
+		try testing.expectEqualSlices(u8, p.bytes, out[e.off..][0..e.len]);
+		try testing.expect(e.off % 4096 == 0);
+	}
+}
+
+test "POSIX-only zstd layout rebuilds every target byte-exact and references no PE body" {
+	const gpa = testing.allocator;
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	const out = try packZstd(gpa, null, &ts, 19, test_id);
+	defer gpa.free(out);
+	try expectTrampoline(out);
+	try expectNoAliasedFunctions(out);
+	for (ts) |t| {
+		const got = try rebuild(gpa, out, t.name);
+		defer gpa.free(got);
+		try testing.expectEqualSlices(u8, t.bytes, got);
+	}
+	const entries = try index.decode(gpa, out[scriptGlobal(out, "x").?..][0..scriptGlobal(out, "y").?], out.len);
+	defer gpa.free(entries);
+	try testing.expectEqual(@as(usize, 0), entries[0].stored_len);
+	for (entries[1..]) |e| try testing.expect(e.ref == null or e.ref.? != 0);
 }

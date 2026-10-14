@@ -20,12 +20,13 @@ enum layout { LAYOUT_AUTO, LAYOUT_RAW, LAYOUT_ZSTD };
 
 static void usage(FILE *f) {
 	fprintf(f,
-		"Usage: rocosmo-pack --windows-x86_64 FILE [--TARGET FILE]... [OPTIONS] -o OUT\n"
+		"Usage: rocosmo-pack [--windows-x86_64 FILE] [--TARGET FILE]... [OPTIONS] -o OUT\n"
 		"\n"
-		"Combine native executables into one file that Windows loads as a PE image\n"
-		"and POSIX shells run as a dispatcher selecting the payload for this OS/CPU.\n"
+		"Combine native executables into one file that POSIX shells run as a\n"
+		"dispatcher selecting the payload for this OS/CPU. With a Windows image the\n"
+		"file is also a PE that Windows loads; without one it is a #!/bin/sh script.\n"
 		"\n"
-		"  --windows-x86_64 FILE   PE32+ image placed at the front (required)\n"
+		"  --windows-x86_64 FILE   PE32+ image placed at the front (optional)\n"
 		"  --linux-x86_64 FILE     --linux-aarch64 FILE\n"
 		"  --macos-x86_64 FILE     --macos-arm64 FILE\n"
 		"  --freebsd-x86_64 FILE   --freebsd-aarch64 FILE   --netbsd-x86_64 FILE\n"
@@ -148,14 +149,14 @@ int main(int argc, char **argv) {
 	check_stdin:
 		if (!strcmp(v, "-") || !strcmp(v, "@stdin")) stdin_uses++;
 	}
-	if (!pe_path || !out_path) { usage(stderr); return 2; }
+	if (!out_path || (!pe_path && count == 0)) { usage(stderr); return 2; }
 	if (stdin_uses > 1) { fprintf(stderr, "rocosmo-pack: only one input may come from stdin\n"); return 2; }
 	if (custom && layout == LAYOUT_ZSTD) { fprintf(stderr, "rocosmo-pack: --payload needs --layout raw (zstd targets need a known OS/CPU)\n"); return 2; }
 	if (custom) layout = LAYOUT_RAW;
 
 	uint8_t *pe = NULL;
 	size_t pe_len = 0;
-	if (read_all(pe_path, &pe, &pe_len)) { perror(pe_path); return 1; }
+	if (pe_path && read_all(pe_path, &pe, &pe_len)) { perror(pe_path); return 1; }
 	rocosmo_payload payloads[MAX_PAYLOADS];
 	rocosmo_target targets[MAX_PAYLOADS];
 	for (size_t k = 0; k < count; k++) {

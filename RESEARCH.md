@@ -550,3 +550,35 @@ The local shell matrix (P3, P7) now includes `oksh` and `mksh`. Linux,
 macOS (native and Rosetta 2), Windows and WSL2 still pass with the new header.
 OpenBSD itself remains untested: its runtime needs the `openbsd.syscalls`
 section or an OpenBSD sysroot, and OpenBSD publishes no cloud-init image.
+
+## 14. Two formats: universal and POSIX-only (2026-10-14)
+
+The PE at offset 0 is needed only for Windows. A container whose project
+declares no Windows target now uses a second format, chosen by `rocosmo-pack`
+when no `--windows-x86_64` input is given:
+
+| | Universal | POSIX-only |
+| --- | --- | --- |
+| Bytes 0-1 | `MZ` (Windows PE) | `#!` |
+| Trampoline | line 1: `MZ=;eval "$(dd … bs=64 skip=1 count=N …)"` | line 1: `#!/bin/sh`; line 2: `eval "$(dd … bs=64 skip=2 count=N …)"` |
+| Evaluated script region | [0x40, e_lfanew) | [0x80, end) |
+| After the script | relocated PE headers and body, then payloads | payloads |
+| Windows | runs the PE in place | not runnable (Windows reports an unsupported app) |
+| Raw `execve(2)` on POSIX | fails with `ENOEXEC` | runs, through the shebang |
+
+Both formats evaluate the same dispatcher script; only the first bytes and
+the offsets differ. The POSIX-only head is 128 bytes because the two lines need
+66, more than the 64 the universal head has. In the zstd layout the index keeps
+its entry 0 for the PE body, empty, and no target references it.
+
+The shebang matters for direct execution. Without one, a file runs only when
+the caller falls back to `sh` after `ENOEXEC`, as shells and glibc's `execvp`
+do. A raw `execve` from a C launcher, a service manager or another language's
+process API gets `ENOEXEC` instead. P3 shows both sides with a raw-`execve`
+launcher (`probes/p3_container/execve.c`): the universal container fails with
+`Exec format error` and the POSIX-only container runs. The universal format
+cannot have a shebang, because Windows requires `MZ` at offset 0.
+
+Verified: the six-shell matrix (P3), Linux memory execution and the cache
+fallback (P7), direct `./app` on macOS arm64 (P3), and direct runs plus base
+`sh` on FreeBSD x86_64/aarch64 and NetBSD x86_64, plus NetBSD `ksh` (P9).
