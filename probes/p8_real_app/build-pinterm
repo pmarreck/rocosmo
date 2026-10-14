@@ -37,9 +37,6 @@ w="$out/work"
 mkdir -p "$w/src" "$w/platform"
 cp "$src"/platform/*.roc "$src/platform/host.c" "$src/platform/pinterm_host.h" "$w/platform/"
 cp "$src"/src/*.roc "$w/src/"
-# pinterm's platform header declares only its Linux targets; declare macOS
-# ones in the copy (same host archive, Archive output).
-perl -0pi -e 's/(\ttargets: \{\n\t\tinputs_dir: "targets\/",\n)/$1\t\tarm64mac: { inputs: ["libhost.a", app], output: Archive },\n\t\tx64mac: { inputs: ["libhost.a", app], output: Archive },\n/' "$w/platform/main.roc"
 bash "$src/tools/roc-glue" "$w/platform" || exit 1
 warn="-Wall -Wextra -Werror -std=c11 -D_GNU_SOURCE"
 for t in "$@"; do
@@ -56,7 +53,7 @@ for t in "$@"; do
 		"$PINTERM_ROC" build "$w/src/main.roc" --opt=speed --target="$rt" --jobs=4 --no-cache --output="$w/lib-$rt.a" >"$w/roc-$rt.log" 2>&1 \
 			|| { echo "build-pinterm: roc build $t failed (see $w/roc-$rt.log)" >&2; exit 1; }
 	fi
-	link_extra=-static; case "$linkt" in *macos*) link_extra="-include $here/macos_compat.h" ;; esac
+	link_extra=-static; case "$linkt" in *macos*) link_extra= ;; esac
 	# shellcheck disable=SC2086
 	zig cc -target "$linkt" $warn -O2 $link_extra -I"$w/platform" -I"$src/host" "$src"/host/*.c "$w/lib-$rt.a" -lm -o "$out/pinterm-$t.tmp" \
 		&& mv "$out/pinterm-$t.tmp" "$out/pinterm-$t" || exit 1
