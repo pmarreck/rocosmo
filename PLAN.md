@@ -49,7 +49,7 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 - [x] Research: OpenBSD syscall pinning, in-memory exec, BSD base gzip, bare Mach-O notarization, Rust/Zig target tiers. (2026-10-13 4:40 PM EDT)
 - [x] Write findings and a recommendation into RESEARCH.md §10. (2026-10-13 4:55 PM EDT)
 - [x] Build the shared runtime and the zstd layout; rocosmo-pack chooses raw or zstd per container (RESEARCH.md section 11). (2026-10-13 6:10 PM EDT)
-- [ ] Run payloads from memory on Linux/FreeBSD/NetBSD for small payloads.
+- [x] Run payloads from memory: Linux done; FreeBSD and NetBSD kernels cannot exec a memfd (RESEARCH.md §13).
 - [x] Run the FreeBSD and NetBSD runtimes on real hosts or VMs: P9, RESEARCH.md §13 (2026-10-14 12:20 AM EDT).
 - [ ] OpenBSD: emit the openbsd.syscalls section or use an OpenBSD sysroot; needs an OpenBSD test host.
 - [x] App-namespaced, self-cleaning cache: `--app-id`, embedded `ROCOSMO_APP_ID=<id>;` (Roc, Zig, Rust), default `local.<name>`; macOS uses ~/Library/Caches. (2026-10-13 7:20 PM EDT)
@@ -58,7 +58,7 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 
 1. [x] Pack a real app, pinterm (Roc game with a C terminal host), into one file: RESEARCH.md section 12 (2026-10-13 9:05 PM EDT).
    - [ ] pinterm 45e5ad7 adds macOS sound (AudioToolbox via dlopen, no SDK). Rebuild the container, then update RESEARCH.md section 12's "silent on macOS" item; someone still has to listen on a Mac.
-2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). Next: FreeBSD/NetBSD (memfd_create since FreeBSD 13.0, NetBSD 11.0), now testable in P9's VMs.
+2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). FreeBSD/NetBSD: not possible; FreeBSD 15.1 and NetBSD 11.0 refuse to exec a memfd (EBADF, EINVAL), so they keep the cache path (RESEARCH.md §13, 2026-10-14 12:30 AM EDT).
 3. [x] Trim the Linux runtimes (libc-free, no stdio): 44-48 KB to 27.5 KB gzipped; RESEARCH.md section 11.x (2026-10-13 9:52 PM EDT).
 4. ~~`--assimilate`~~ declined (see above); the container never rewrites itself.
 4a. [x] (2026-10-14 12:35 AM EDT) No APE/Cosmopolitan dependency (BDFN, 2026-10-13 11:55 PM EDT): retire the P1 cosmocc probe from `./test` and drop `cosmocc` from the flake; keep its findings in RESEARCH.md and credit Cosmopolitan and APE (Justine Tunney) in README.md as the design the container format descends from. The shipped pipeline already uses none of it.

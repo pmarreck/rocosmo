@@ -520,8 +520,13 @@ P9 takes about a minute; the emulated aarch64 guest dominates.
 All three pass: zstd and raw layouts select the right payload, arguments with
 spaces and exit statuses pass through, a rerun uses the cache, a direct
 `./app` falls back to the shell, and the zstd cache holds exactly the runtime
-and one payload. FreeBSD and NetBSD use the cache path; memfd execution there
-is still Linux-only.
+and one payload. FreeBSD and NetBSD use the cache path, and must: a one-off
+probe in the same VMs copied `/bin/echo` into a `memfd_create` descriptor and
+tried to run it. FreeBSD 15.1 `fexecve` fails with `EBADF` and NetBSD 11.0
+with `EINVAL`; `execve("/dev/fd/N")` fails with `ENOENT` (FreeBSD, no fdescfs
+mounted) and `EACCES` (NetBSD). Both kernels execute only vnode-backed files,
+so memfd execution stays Linux-only. Zig 0.16's NetBSD libc headers also lack
+`memfd_create` (NetBSD 11 added it as system call 500).
 
 Two shell findings changed the container header:
 
