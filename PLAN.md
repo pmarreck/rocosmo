@@ -57,7 +57,7 @@ Design under study: the unchanged MZ/sh header picks the OS and CPU and runs a s
 
 ## Work order (BDFN, 2026-10-13 8:12 PM EDT: signing goes last)
 
-1. Pack a real app, pinterm (Roc game with a C terminal host), into one file.
+1. [x] Pack a real app, pinterm (Roc game with a C terminal host), into one file: RESEARCH.md section 12 (2026-10-13 9:05 PM EDT).
 2. [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). Next: FreeBSD/NetBSD (memfd_create since FreeBSD 13.0, NetBSD 11.0), untestable without hosts.
 3. Trim the Linux runtimes (libc-free, no stdio).
 4. `--assimilate`.

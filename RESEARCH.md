@@ -460,3 +460,27 @@ The Linux runtimes are statically linked with musl; its stdio accounts for part 
   - the default cache homes on Linux and on a real Mac.
 
   A mutation that stops sparing temp files fails both the cleaning test and the 32-way concurrency test.
+
+## 12. A real app: pinterm (2026-10-13)
+
+pinterm is a terminal pinball game: a Roc core (physics, scoring, rendering) behind a C terminal/audio host. `probes/p8_real_app/build-pinterm PINTERM_DIR OUT` cross-compiles it from Linux x86_64 with pinterm's own pinned Roc compiler, without modifying the pinterm checkout, and `pack-pinterm` packs the results.
+
+| Target | Binary | Run | Result |
+| --- | --- | --- | --- |
+| linux-x86_64 | static ELF, 3.2 MB | native, from a memfd | 300-frame headless run, exit 0; only the runtime cached |
+| linux-aarch64 | static ELF | qemu-user (emulated) | runtime rebuilds the payload byte-identically; `--about` runs |
+| macos-arm64 | Mach-O | native real Mac | headless run exit 0 |
+| macos-x86_64 | Mach-O | Rosetta 2 (emulated) | headless run exit 0 |
+| Windows x86_64 | 3 KB stub PE | native real host | prints the WSL hint, exit 1 (pinterm's host is POSIX-only) |
+| WSL2 | `sh ./pinterm` | Linux path | headless run exit 0, one cache file (the runtime) |
+
+The container is 2,428,955 bytes; the raw layout would be 9,064,433. Each Roc compile with `--opt=speed` took about 10 minutes and used one core, so the four targets build in parallel.
+
+Problems found, all in pinterm rather than rocosmo:
+
+- Its host calls `pipe2`, `F_SETPIPE_SZ` and `clock_nanosleep`, which macOS lacks. The probe force-includes `macos_compat.h` on macOS as a stopgap.
+- Its platform header declares only Linux Roc targets; the probe adds `arm64mac` and `x64mac` to its scratch copy.
+- `--about` reports "linux" on every OS, and its audio players (`pw-play`, `paplay`, `aplay`) do not exist on macOS, so the game is silent there.
+- Its Linux binaries carry debug info and are not stripped.
+
+The game was run headless only; nobody has yet played it interactively from the container on macOS.
