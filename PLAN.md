@@ -33,7 +33,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 - [ ] Shared per-architecture code across OSes: analyzed in RESEARCH.md §7, not built.
 - [ ] Windows ARM64 native: relay from the x64 host to an embedded arm64 PE; test on Windows 11 on Arm hardware.
 - [ ] Build from Linux aarch64 and macOS x86_64 hosts (untested; no hardware used yet).
-- [ ] Make the build scripts portable to a Windows build host.
+- [ ] Build rocosmo-pack and the runtimes on a Windows host (packing and building Roc apps there already work through the two containers, tests/cli/toolchain_hosts.bash, 2026-10-16).
 - [ ] OpenBSD runtime and test host (context: docs/plan_context/zstd_runtime.md)
 
 ## Last

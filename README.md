@@ -83,6 +83,10 @@ scripts/build-roc-container roc        # fetches the pinned nightlies and packs 
 
 The result holds the pinned Roc nightly for Linux x86_64 and aarch64, macOS x86_64 and arm64, and Windows x86_64: every system the nightlies are published for. The test suite runs it natively on Linux, macOS arm64 (and under Rosetta 2) and Windows x86_64, and on each it builds an app that runs there. It is large, 400 MB at the default `--level 19` (437 MB at `--level 3`), mostly because Windows needs its 252 MB executable stored uncompressed. If you pass the file on, include Roc's `LICENSE` and `legal_details` from the nightly with it.
 
+### Building without Nix
+
+Together, the Roc container and the rocosmo-pack container are a complete toolchain on Linux, macOS and Windows. Nothing else needs installing, as long as the app's platform ships its host for every target, as P2 does. The tests do exactly that on the Windows and macOS hosts: the Roc container builds the P2 app for all five targets, the rocosmo-pack container joins them, and the resulting file runs there and back on Linux.
+
 ## Layouts
 
 `--layout raw` stores each executable as-is; the dispatcher copies it out with `dd`. `--layout zstd` stores each one as a [Zstandard](https://github.com/facebook/zstd) frame, or as a delta against a same-CPU executable or the Windows image, plus a small runtime per OS and CPU (about 10 KB gzipped) that rebuilds it. The default, `--layout auto`, builds both and keeps the smaller: raw for a single small payload, zstd once the payloads add up to a few tens of KB.
