@@ -23,6 +23,15 @@
 			};
 
 
+			# The same nightly for every OS/CPU the nightlies cover, keyed by
+			# rocosmo-pack target: the payloads of the Roc compiler container.
+			rocTargetAssets = {
+				linux-x86_64 = rocAssets.x86_64-linux;
+				linux-aarch64 = rocAssets.aarch64-linux;
+				macos-arm64 = rocAssets.aarch64-darwin;
+				macos-x86_64 = rocAssets.x86_64-darwin;
+				windows-x86_64 = { name = "windows_x86_64"; ext = "zip"; hash = "sha256-0e3sDs27fjtrvFEftK79hLK+hgb703ijET3oDAo+8b4="; };
+			};
 			systems = builtins.attrNames rocAssets;
 			forAll = f: nixpkgs.lib.genAttrs systems (system: f system nixpkgs.legacyPackages.${system});
 		in
@@ -50,6 +59,29 @@
 						'';
 					};
 
+					# Every target's roc executable, one folder per rocosmo-pack target
+					# (roc, or roc.exe for Windows), for scripts/roc-container.
+					roc-all-targets = pkgs.stdenvNoCC.mkDerivation {
+						pname = "roc-nightly-all-targets";
+						version = rocNightly;
+						nativeBuildInputs = [ pkgs.unzip ];
+						dontUnpack = true;
+						dontConfigure = true;
+						dontBuild = true;
+						dontFixup = true;
+						installPhase = nixpkgs.lib.concatStrings (nixpkgs.lib.mapAttrsToList (target: a:
+							let
+								ext = a.ext or "tar.gz";
+								src = pkgs.fetchurl {
+									url = "https://github.com/roc-lang/nightlies/releases/download/nightly-${rocNightly}/roc_nightly-${a.name}-${rocNightly}.${ext}";
+									hash = a.hash;
+								};
+							in ''
+								mkdir -p unpack/${target} $out/${target}
+								${if ext == "zip" then "unzip -q ${src} -d unpack/${target}" else "tar -xzf ${src} -C unpack/${target}"}
+								find unpack/${target} -type f \( -name roc -o -name roc.exe \) -exec cp {} $out/${target}/ \;
+							'') rocTargetAssets);
+					};
 				});
 
 			devShells = forAll (system: pkgs: {

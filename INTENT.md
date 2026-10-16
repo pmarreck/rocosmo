@@ -39,8 +39,20 @@ rocosmo owns:
 - whatever the container format itself requires;
 - proving that each container runs on every OS/CPU it claims.
 
-## Evidence and stopping point
+## Current phase (BDFN, 2026-10-13 onward)
+
+The research milestone below was reached (RESEARCH.md). BDFN then directed building the tool itself, and that is now the project's purpose: one file per program that runs natively on every OS and CPU the program is built for.
+
+- The container format and `rocosmo-pack`, with no APE or Cosmopolitan dependency (2026-10-13).
+- Two formats, universal (Windows PE plus shell script) and POSIX-only (`#!/bin/sh`), each with raw and zstd payload layouts; the pieces that rebuild payloads kept as small as possible (formats 2026-10-14; size goal 2026-10-15).
+- The `rocosmo` command, written in Roc, which builds the targets a Roc app's platform declares and packs them (2026-10-15).
+- The Roc compiler packed as one container that runs on every OS the Roc nightlies cover and builds more containers (2026-10-15).
+- Publishing: an MIT license, TECHNIQUE.md and a README written for outside readers, and each finished step pushed to GitHub (2026-10-14, 2026-10-16).
+
+Success means each container runs natively on every OS/CPU it claims, shown by `./test` on real hardware and virtual machines; an untested target stays marked untested.
+
+## Evidence and stopping point (research phase, completed)
 
 The initial milestone is a sourced report with a host-by-target matrix, actual versus proposed capabilities, architecture options, licensing/distribution constraints, reproducible experiment records where feasible, and a scoped implementation proposal. A bounded failed experiment with a precise cause is useful evidence; an untested target must remain marked untested. Do not claim feasibility solely because a hello-world compiler stage succeeds.
 
-Stop after the initial report and report to the coordinating agent. This does not authorize an unbounded implementation campaign or additional agents.
+Stop after the initial report and report to the coordinating agent. This does not authorize an unbounded implementation campaign or additional agents. (Reached 2026-10-13; the current phase above replaces this stopping point. Additional agents still need BDFN's approval.)

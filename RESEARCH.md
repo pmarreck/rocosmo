@@ -604,3 +604,33 @@ P7 gates all seven at 16,000 bytes.
 Linux runs payloads up to 64 MiB from a memfd and decodes them on every start, so each start there costs about 3 ms more per MB of payload (wall time per MB rebuilt went from 2.4 ms to 5.6 ms in the run above); a 3 MB app starts about 10 ms later. Other systems and larger payloads decode once into the cache. A decoder written for both size and speed (table-driven bit reading, word-sized match copies) is the way to recover the time; it is recorded in PLAN.md.
 
 Smaller runtimes also move `--layout auto`'s break-even: the five-target P2 probe set is now smaller as zstd (83,432 bytes against 107,648 raw), so P3 and P4, which test the raw layout, pass `--layout raw`.
+
+## 16. The Roc compiler as one container (2026-10-16)
+
+`scripts/build-roc-container` packs the pinned nightly (`nightly-2026-10-12-2664a27`) for all five systems it is published for. `flake.nix` fetches each archive by its GitHub release digest (package `roc-all-targets`). Each archive holds one static `roc` executable plus `LICENSE` and `legal_details`, so nothing else has to travel with it.
+
+| Input | Bytes |
+| --- | --- |
+| linux-x86_64 | 249,432,544 |
+| linux-aarch64 | 234,164,056 |
+| macos-x86_64 | 265,191,172 |
+| macos-arm64 | 252,831,024 |
+| windows-x86_64 (`roc.exe`) | 251,697,664 |
+
+| Level | Container | Pack time | Peak memory |
+| --- | --- | --- | --- |
+| 3 | 436,646,951 | 16 s | 2.1 GB |
+| 19 (default) | 400,406,010 | 710 s | 1.9 GB |
+
+The Windows image is stored uncompressed, as the universal format requires, so it is 252 MB of either container. Measured with `zstd -3 --long=31` on single inputs: the Linux aarch64 compiler is 58.8 MB as a whole frame and 42.2 MB as a delta against the Linux x86_64 one, and the macOS x86_64 compiler is 42.7 MB as a delta against Linux x86_64. Cross-CPU deltas therefore save as much as same-OS-family ones for this program, unlike the small apps in §10. `rocosmo-pack` still tries only same-CPU references and the Windows image; with every x86_64 target able to use the Windows image, the gain from also trying cross-CPU references is expected to be small and was not measured.
+
+Running it (level 3 unless noted, `version`):
+- Linux x86_64: 1.3 s on the first run (rebuild into the cache; the payload is over the 64 MiB memfd limit), 0.024 s after. Level 19: 1.52 s, then 0.02 s.
+- macOS arm64 (real host): native, and Rosetta 2 with `arch -x86_64`, both report the pinned nightly.
+- Windows x86_64 (real host): the file renamed to `.exe` runs as the native PE.
+
+It builds apps. On Linux it built P2 for x64musl, arm64musl, x64mac, arm64mac and x64win, and those packed into a container that ran. On the Mac it built and ran an arm64mac P2 app, and on Windows an x64win one. `tests/cli/roc_container.bash` checks all of this in `./test`.
+
+Its output matches native `roc`'s, with two properties of Roc that look like differences at first. Native `roc` produced a 10,096-byte x64musl P2 executable with a warm Roc cache and a 10,128-byte one with an empty cache, so Roc's output depends on the state of its own cache; the container's first build, with an empty cache, was byte-identical to native `roc` with an empty cache. Roc's x64win output differs between any two builds at byte 129, inside the PE header's `TimeDateStamp`.
+
+basic-cli 0.25.0's Windows target also fails to link on the Windows host (no Visual Studio installed there): `lld-link` reports undefined `mainCRTStartup` and `memcpy`, the Microsoft C runtime. On the Mac, the same basic-cli app builds for arm64mac, x64mac and x64musl.

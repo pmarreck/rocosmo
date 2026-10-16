@@ -4,12 +4,13 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Publishing (BDFN, 2026-10-14)
 
-- [x] Add an MIT license (copyright holder: the git author) (done 2026-10-14 14:45 EDT)
 - [x] Zstandard BSD notice: THIRD_PARTY_NOTICES.md plus a license-URL comment in zstd containers, not the full text (done 2026-10-14 17:15 EDT)
 - [x] `rocosmo` command in Roc on basic-cli (src/rocosmo): builds the targets the platform declares, then packs; universal with a Windows target, else POSIX-only (done 2026-10-16 00:40 EDT)
-- [ ] basic-cli 0.25.0 cross-builds only its musl targets from Linux (no macOS libSystem stub, no MSVC runtime libs); find where its mac/win builds can come from (a Mac host, or a fix upstream) before claiming basic-cli apps pack everywhere.
+- [ ] basic-cli 0.25.0: macOS targets build on a Mac (verified 2026-10-16) but not from Linux (no libSystem stub); x64win needs Microsoft's C runtime libraries and fails on Linux, macOS and the Windows host alike (RESEARCH.md §16). Platform's responsibility; rocosmo stops with Roc's error.
 - [x] TECHNIQUE.md: both formats, dispatcher, layouts, memfd, limits; linked from the README, trampoline lines checked against the packer (done 2026-10-16 10:28 EDT)
-- [ ] Ship the Roc compiler as one rocosmo container that runs on every OS the nightlies cover and builds more containers (BDFN approved 2026-10-15; next after TECHNIQUE.md, 2026-10-16).
+- [x] Roc compiler as one container: scripts/build-roc-container, five nightlies, 400 MB at level 19; runs and builds apps on Linux, macOS (native, Rosetta 2) and Windows; RESEARCH.md §16 (done 2026-10-16 10:47 EDT)
+- [ ] Shrink universal containers with a large Windows image: a small x64 PE launcher that rebuilds the compressed real PE into a per-user cache and runs it (the Roc container would lose most of its 252 MB raw PE). Shares its design with the Windows ARM64 relay.
+- [ ] Ship rocosmo-pack and the rocosmo command as containers too, so the Roc container plus these two build more containers on any OS without Nix.
 - [x] Shrink the per-OS/CPU runtimes: zstd's educational decoder, 23.6-28.4 KB to 14.4-15.3 KB gzipped, P7 gate 16,000 bytes; RESEARCH.md §15 (done 2026-10-16 10:19 EDT)
 - [ ] Recover the decode speed the small decoder lost (about 3x slower; +3 ms per MB on each Linux memfd start): a size-and-speed decoder, differential-tested against libzstd (RESEARCH.md §15).
 - [ ] Push each finished step to GitHub (BDFN, 2026-10-16): new private repo, visibility left for BDFN to change.
@@ -17,6 +18,9 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 - [ ] Audit all commits and tracked files for private details; push only after BDFN picks the remote.
 
 ## Awaiting BDFN
+
+- [ ] Install Visual Studio Build Tools (the MSVC C runtime) on the Windows test host so basic-cli's x64win target can be tried there? It changes that machine's setup (asked 2026-10-16).
+- [ ] Make the GitHub repo public, and publish the Roc container as a release asset (Roc's UPL license and legal_details would ship with it)? (asked 2026-10-16)
 
 - [ ] Decide scope for app icons across OSes (asked 2026-10-14).
 - [ ] Decide scope for double-clickable macOS GUI apps (.app bundle in the cache, a wrapper beside the container, or neither) (asked 2026-10-14).
