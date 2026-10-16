@@ -12,6 +12,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 - [ ] The rocosmo command as a container: blocked on basic-cli (no Windows link anywhere; macOS targets only on a Mac). Alternatives: build its macOS slots on the Mac host, or move it to a platform that cross-builds every target.
 - [x] Shrink the per-OS/CPU runtimes: zstd's educational decoder, 23.6-28.4 KB to 14.4-15.3 KB gzipped, P7 gate 16,000 bytes; RESEARCH.md §15 (done 2026-10-16 10:19 EDT)
 - [x] Runtimes, second pass: compact XXH64, function sections and -Oz, 9.9-11.3 KB gzipped (decode 16% slower), gate 12,000; RESEARCH.md §15 (done 2026-10-16 11:19 EDT)
+- [ ] Lower the runtime's peak memory on large payloads: map the container (mmap) instead of copying stored bytes and a raw reference into the heap. Measured 2026-10-16 on the Roc container: 532 MB peak RSS rebuilding linux-x86_64 (raw 252 MB PE reference plus 250 MB output plus the frame); a mapped reference is clean page cache. Measure anonymous memory, not RSS.
 - [ ] Recover the decode speed the small decoder lost (about 3x slower; +3 ms per MB on each Linux memfd start): a size-and-speed decoder, differential-tested against libzstd (RESEARCH.md §15).
 - [ ] Push each finished step to GitHub (BDFN, 2026-10-16): new private repo, visibility left for BDFN to change.
 - [ ] Attractive README showing the one-command use.
@@ -19,6 +20,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Awaiting BDFN
 
+- [ ] A rocosmo-owned Roc platform (libc-free Zig host per target, the file/process/env API the rocosmo command needs) so the rocosmo command and similar apps cross-build every target from any host, including Windows? INTENT's responsibility boundary puts platforms on the project side, so this would be a separate deliverable (asked 2026-10-16).
 - [ ] Windows launcher for large universal containers (opt-in, after a Defender test?): proposal and risks in docs/plan_context/windows_launcher.md (asked 2026-10-16).
 - [ ] Install Visual Studio Build Tools (the MSVC C runtime) on the Windows test host so basic-cli's x64win target can be tried there? It changes that machine's setup (asked 2026-10-16).
 - [ ] Make the GitHub repo public, and publish the Roc container as a release asset (Roc's UPL license and legal_details would ship with it)? (asked 2026-10-16)
