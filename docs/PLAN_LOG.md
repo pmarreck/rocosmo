@@ -35,3 +35,9 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 - [x] [Work order (BDFN, 2026-10-13 8:12 PM EDT: signing goes last)] Pack a real app, pinterm (Roc game with a C terminal host), into one file: RESEARCH.md section 12 (2026-10-13 9:05 PM EDT).
 	- [x] pinterm 45e5ad7 adds macOS sound (AudioToolbox via dlopen, no SDK); container rebuilt and checked, copy on the Mac at ~/pinterm-rocosmo; someone still has to listen on a Mac (2026-10-14 1:00 AM EDT).
 - [x] [Work order (BDFN, 2026-10-13 8:12 PM EDT: signing goes last)] Trim the Linux runtimes (libc-free, no stdio): 44-48 KB to 27.5 KB gzipped; RESEARCH.md section 11.x (2026-10-13 9:52 PM EDT).
+
+## Retired 2026-10-16
+
+- [x] [Recently done] Run payloads from memory: Linux done; FreeBSD and NetBSD kernels cannot exec a memfd (RESEARCH.md §13). (2026-10-14 12:30 AM EDT)
+- [x] [Recently done] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). FreeBSD 15.1 and NetBSD 11.0 refuse to exec a memfd (EBADF, EINVAL), so they keep the cache path (RESEARCH.md §13, 2026-10-14 12:30 AM EDT).
+- [x] [Recently done] FreeBSD and NetBSD runtimes in QEMU VMs (P9). Found and fixed: NetBSD sh and OpenBSD ksh reject NUL bytes (new dd/eval header line), ksh's `r` alias (function renamed) (2026-10-14 12:20 AM EDT).

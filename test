@@ -14,7 +14,7 @@ exec </dev/null
 
 source "$ROOT/tests/lib.bash"
 [ -f "$ROOT/local/hosts.env" ] && source "$ROOT/local/hosts.env"
-for suite in "$ROOT/tests/unit.bash" "$ROOT/tests/docs.bash" "$ROOT"/tests/probes/*.bash; do
+for suite in "$ROOT/tests/unit.bash" "$ROOT/tests/docs.bash" "$ROOT"/tests/probes/*.bash "$ROOT"/tests/cli/*.bash; do
 	source "$suite"
 done
 

@@ -6,7 +6,8 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 - [x] Add an MIT license (copyright holder: the git author) (done 2026-10-14 14:45 EDT)
 - [x] Zstandard BSD notice: THIRD_PARTY_NOTICES.md plus a license-URL comment in zstd containers, not the full text (done 2026-10-14 17:15 EDT)
-- [ ] `rocosmo` command in Roc on basic-cli: build exactly the targets the app's platform declares, then pack (universal format when a Windows target exists, else POSIX-only).
+- [x] `rocosmo` command in Roc on basic-cli (src/rocosmo): builds the targets the platform declares, then packs; universal with a Windows target, else POSIX-only (done 2026-10-16 00:40 EDT)
+- [ ] basic-cli 0.25.0 cross-builds only its musl targets from Linux (no macOS libSystem stub, no MSVC runtime libs); find where its mac/win builds can come from (a Mac host, or a fix upstream) before claiming basic-cli apps pack everywhere.
 - [ ] TECHNIQUE.md: full technique write-up covering both formats, linked from the README.
 - [ ] Shrink the per-OS/CPU runtimes (zstd decode and payload rebuild) as far as possible; measure each against the current 27.5-38 KB gzipped (BDFN, 2026-10-15).
 - [ ] Attractive README showing the one-command use.
@@ -36,7 +37,4 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Recently done
 
-- [x] Run payloads from memory: Linux done; FreeBSD and NetBSD kernels cannot exec a memfd (RESEARCH.md §13). (2026-10-14 12:30 AM EDT)
-- [x] Linux: run the payload from memory (memfd + fexecve) instead of writing a cache file (2026-10-13 8:35 PM EDT). FreeBSD 15.1 and NetBSD 11.0 refuse to exec a memfd (EBADF, EINVAL), so they keep the cache path (RESEARCH.md §13, 2026-10-14 12:30 AM EDT).
 - [x] No APE/Cosmopolitan dependency (BDFN, 2026-10-13 11:55 PM EDT): P1 cosmocc probe retired from `./test`, `cosmocc` dropped from the flake, findings kept in RESEARCH.md, Cosmopolitan and APE (Justine Tunney) credited in README.md (2026-10-14 12:35 AM EDT).
-- [x] FreeBSD and NetBSD runtimes in QEMU VMs (P9). Found and fixed: NetBSD sh and OpenBSD ksh reject NUL bytes (new dd/eval header line), ksh's `r` alias (function renamed) (2026-10-14 12:20 AM EDT).
