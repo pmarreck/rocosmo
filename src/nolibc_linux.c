@@ -62,6 +62,10 @@ _Noreturn static void exit_group(int code) {
 	for (;;) SYS(SYS_exit_group, code, 0, 0, 0, 0, 0);
 }
 _Noreturn void _exit(int code) { exit_group(code); }
+void *mmap(void *addr, size_t n, int prot, int flags, int fd, off_t off) {
+	long p = ret(SYS(SYS_mmap, addr, n, prot, flags, fd, off));
+	return p == -1 ? MAP_FAILED : (void *)p;
+}
 
 /* Entry from _start with the initial stack: argc, argv..., NULL, envp..., NULL. */
 _Noreturn void rocosmo_start(long *sp) {

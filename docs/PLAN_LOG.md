@@ -45,3 +45,5 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 - [x] [Publishing (BDFN, 2026-10-14)] Two formats: universal (MZ/PE + sh) and POSIX-only (#!/bin/sh, no PE) when no Windows target is given; raw execve runs the POSIX-only one. RESEARCH.md §14 (done 2026-10-14 13:05 EDT, 0ceb5de)
 - [x] [Publishing (BDFN, 2026-10-14)] Add an MIT license (copyright holder: the git author) (done 2026-10-14 14:45 EDT)
 - [x] [Publishing (BDFN, 2026-10-14)] Zstandard BSD notice: THIRD_PARTY_NOTICES.md plus a license-URL comment in zstd containers, not the full text (done 2026-10-14 17:15 EDT)
+- [x] [Publishing (BDFN, 2026-10-14)] `rocosmo` command in Roc on basic-cli (src/rocosmo): builds the targets the platform declares, then packs; universal with a Windows target, else POSIX-only (done 2026-10-16 00:40 EDT)
+- [x] [Publishing (BDFN, 2026-10-14)] Shrink the per-OS/CPU runtimes: zstd's educational decoder, 23.6-28.4 KB to 14.4-15.3 KB gzipped, P7 gate 16,000 bytes; RESEARCH.md §15 (done 2026-10-16 10:19 EDT)

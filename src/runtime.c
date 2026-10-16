@@ -22,8 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#ifdef __linux__
 #include <sys/mman.h>
+#ifdef __linux__
 #ifndef MFD_EXEC
 #define MFD_EXEC 0x0010U
 #endif
@@ -82,18 +82,20 @@ static int usage_error(const char *usage) {
 	return 2;
 }
 
-/* Read [off, off+len) of fd into a new buffer (at least 1 byte allocated). */
-static uint8_t *read_range(int fd, uint64_t off, uint64_t len) {
-	if (len > SIZE_MAX) return NULL;
-	uint8_t *buf = malloc(len ? (size_t)len : 1);
-	if (!buf) return NULL;
-	for (size_t got = 0; got < len;) {
-		ssize_t n = pread(fd, buf + got, (size_t)len - got, (off_t)(off + got));
-		if (n < 0 && errno == EINTR) continue;
-		if (n <= 0) { free(buf); return NULL; }
-		got += (size_t)n;
-	}
-	return buf;
+/* Map [off, off+len) of the container read-only. Mapped bytes are clean
+ * page cache, so frames and raw references cost no private memory (a 250 MB
+ * payload rebuilt against the raw Windows image needed over 400 MB when both
+ * were copied into the heap). The offset is rounded down to 64 KiB, a
+ * multiple of every supported page size. The runtime exits or execs right
+ * after rebuilding, so nothing is unmapped or freed. A container truncated
+ * while mapped makes the access fault (SIGBUS) instead of reading short. */
+#define MAP_ALIGN ((uint64_t)1 << 16)
+static const uint8_t *map_range(int fd, uint64_t off, uint64_t len) {
+	uint64_t start = off & ~(MAP_ALIGN - 1);
+	if (len > SIZE_MAX - MAP_ALIGN) return NULL;
+	size_t n = (size_t)(off - start + len);
+	void *p = mmap(NULL, n ? n : 1, PROT_READ, MAP_PRIVATE, fd, (off_t)start);
+	return p == MAP_FAILED ? NULL : (const uint8_t *)p + (off - start);
 }
 
 /* Strict unsigned decimal: digits only, no sign or spaces, no overflow. */
@@ -133,47 +135,36 @@ static int plan(const char *container, const char *idx_off_s, const char *idx_le
 	if (end < 0) return fail(container, strerror(errno));
 	uint64_t size = (uint64_t)end;
 	if (idx_off > size || idx_len > size - idx_off) return fail(container, "index lies outside the container");
-	uint8_t *idx = read_range(fd, idx_off, idx_len);
+	const uint8_t *idx = map_range(fd, idx_off, idx_len);
 	if (!idx) return fail(container, "cannot read index");
 	int s = rocosmo_rt_plan_target(idx, (size_t)idx_len, size, (const uint8_t *)name, strlen(name), p);
-	free(idx);
 	if (s) return fail(name, rocosmo_rt_status_message(s));
 	*fd_out = fd;
 	return 0;
 }
 
-/* Rebuild the planned payload; returns a malloc'd buffer of p->content_len bytes. */
-static int rebuild(int fd, const char *name, const rocosmo_rt_plan *p, uint8_t **out_buf) {
-	uint8_t *ref = NULL;
-	size_t ref_len = 0;
-	int s;
-	if (p->ref_kind != ROCOSMO_REF_NONE) {
-		uint8_t *stored = read_range(fd, p->ref_offset, p->ref_stored_len);
-		if (!stored) return fail(name, "cannot read reference");
-		if (p->ref_kind == ROCOSMO_REF_RAW) {
-			ref = stored;
-		} else {
-			ref = malloc(p->ref_content_len ? (size_t)p->ref_content_len : 1);
-			if (!ref) return fail(name, "out of memory");
-			s = rocosmo_rt_decode(stored, (size_t)p->ref_stored_len, NULL, 0, ref, (size_t)p->ref_content_len);
-			free(stored);
-			if (s) return fail(name, rocosmo_rt_status_message(s));
-		}
-		ref_len = (size_t)p->ref_content_len;
-	}
-	uint8_t *stored = read_range(fd, p->offset, p->stored_len);
-	if (!stored) return fail(name, "cannot read payload");
-	uint8_t *out = stored;
-	if (p->kind != ROCOSMO_RAW) {
-		out = malloc(p->content_len ? (size_t)p->content_len : 1);
-		if (!out) return fail(name, "out of memory");
-		s = rocosmo_rt_decode(stored, (size_t)p->stored_len, ref, ref_len, out, (size_t)p->content_len);
-		free(stored);
-		if (s) return fail(name, rocosmo_rt_status_message(s));
-	}
-	free(ref);
-	*out_buf = out;
+/* Decode a frame into a new heap buffer of n bytes. */
+static int decode_new(const char *name, const uint8_t *frame, uint64_t frame_len, const uint8_t *ref, size_t ref_len, uint64_t n, const uint8_t **out) {
+	uint8_t *buf = malloc(n ? (size_t)n : 1);
+	if (!buf) return fail(name, "out of memory");
+	int s = rocosmo_rt_decode(frame, (size_t)frame_len, ref, ref_len, buf, (size_t)n);
+	if (s) return fail(name, rocosmo_rt_status_message(s));
+	*out = buf;
 	return 0;
+}
+
+/* Rebuild the planned payload (p->content_len bytes): mapped from the
+ * container when stored raw, else decoded into the heap. */
+static int rebuild(int fd, const char *name, const rocosmo_rt_plan *p, const uint8_t **out) {
+	const uint8_t *ref = NULL;
+	if (p->ref_kind != ROCOSMO_REF_NONE) {
+		if (!(ref = map_range(fd, p->ref_offset, p->ref_stored_len))) return fail(name, "cannot read reference");
+		if (p->ref_kind == ROCOSMO_REF_FRAME && decode_new(name, ref, p->ref_stored_len, NULL, 0, p->ref_content_len, &ref)) return 1;
+	}
+	const uint8_t *stored = map_range(fd, p->offset, p->stored_len);
+	if (!stored) return fail(name, "cannot read payload");
+	if (p->kind == ROCOSMO_RAW) { *out = stored; return 0; }
+	return decode_new(name, stored, p->stored_len, ref, ref ? (size_t)p->ref_content_len : 0, p->content_len, out);
 }
 
 static int to_file(int argc, char **argv) {
@@ -182,13 +173,12 @@ static int to_file(int argc, char **argv) {
 	rocosmo_rt_plan p;
 	int s = plan(argv[1], argv[2], argv[3], argv[4], &fd, &p);
 	if (s) return s;
-	uint8_t *out;
+	const uint8_t *out;
 	if ((s = rebuild(fd, argv[4], &p, &out))) return s;
 	close(fd);
 	int ofd = open(argv[5], O_WRONLY | O_CREAT | O_EXCL, 0700);
 	if (ofd < 0) return fail(argv[5], strerror(errno));
 	if (write_all(ofd, out, (size_t)p.content_len) || close(ofd)) { unlink(argv[5]); return fail(argv[5], strerror(errno)); }
-	free(out);
 	return 0;
 }
 
@@ -221,14 +211,13 @@ static int to_memory(int argc, char **argv) {
 	rocosmo_rt_plan p;
 	if (plan(container, argv[3], argv[4], name, &fd, &p)) return 126;
 	if (p.content_len > MEMORY_LIMIT) { close(fd); return fall_back(container, app_argv + 1); }
-	uint8_t *out;
+	const uint8_t *out;
 	if (rebuild(fd, name, &p, &out)) return 126;
 	close(fd);
 	unsigned flags = MFD_CLOEXEC | MFD_ALLOW_SEALING;
 	int mfd = memfd_create(name, flags | MFD_EXEC);
 	if (mfd < 0 && errno == EINVAL) mfd = memfd_create(name, flags); /* before Linux 6.3 */
 	if (mfd >= 0 && !write_all(mfd, out, (size_t)p.content_len)) {
-		free(out);
 		fcntl(mfd, F_ADD_SEALS, F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE);
 		fexecve(mfd, app_argv, environ);
 	}

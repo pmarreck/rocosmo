@@ -664,3 +664,5 @@ P7's gate is now 14,500 bytes.
 | macos-arm64 | 13,450 | 11,245 |
 
 Rebuilding the 250 MB Roc payload takes 1.66-1.68 s wall (1.35-1.38 s user) instead of 1.43-1.45 s, about 6.7 ms per MB. The project's stated priority for these pieces is size, so `-Oz` stays; removing the three `-Oz` flags in `build.zig` restores the second pass. P7's gate is now 12,000 bytes.
+
+**Peak memory (2026-10-16).** The runtime used to copy each byte range it needed (index, stored frame, raw reference) into the heap with `pread`. It now maps them read-only, so they are clean page cache rather than private memory. Measured under a cgroup memory cap (`systemd-run --user --scope -p MemoryMax=400M -p MemorySwapMax=0`, output on disk, the level-3 Roc container): before, rebuilding linux-x86_64 (a delta against the raw 252 MB Windows image) was killed at 400 MB and passed at 600 MB; after, it passes at 400 MB, as do macos-x86_64 and macos-arm64. linux-aarch64 is still killed at 400 MB: its reference is a whole frame that has to be decoded into memory (about 250 MB) next to its own 234 MB output. The change also made the runtimes about 70 bytes smaller.
