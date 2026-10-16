@@ -597,11 +597,11 @@ The runtimes now decode with Meta's single-file educational decoder (`doc/educat
 | macos-x86_64 | 24,571 | 14,399 |
 | macos-arm64 | 23,640 | 14,400 |
 
-P7 gates all seven at 16,000 bytes.
+P7 gated all seven at 16,000 bytes (14,500 after the second pass below).
 
 **Cost: decoding is about three times slower.** Rebuilding the 250 MB Roc compiler (x86_64 Linux, AMD Threadripper 3990X, `--level 3` frame, `/usr/bin/time`, three runs each, identical output): libzstd runtime 0.27-0.31 s user, 0.29-0.31 s system, 0.59-0.61 s wall; small decoder 1.10-1.11 s user, 0.28 s system, 1.39-1.40 s wall. The first small-decoder build spent 0.8 s in system time: the decoder allocates and frees a few tables per 128 KB block, and `nolibc_linux.c` mapped each block separately (61,188 mmap/munmap pairs, counted with `strace -c`). Keeping up to eight freed mappings of at most 1 MiB for reuse removed that for about 150 gzipped bytes. In the same profile, `perf` attributes 45% of samples to `decode_frame` (sequence decoding, inlined) and 26% to `HUF_decompress_1stream`; compiling the decoder at `-O2` or `-O3` instead of `-Os` changed user time by under 10% and added about 2 KB gzipped, so it stays at `-Os`.
 
-Linux runs payloads up to 64 MiB from a memfd and decodes them on every start, so each start there costs about 3 ms more per MB of payload (wall time per MB rebuilt went from 2.4 ms to 5.6 ms in the run above); a 3 MB app starts about 10 ms later. Other systems and larger payloads decode once into the cache. A decoder written for both size and speed (table-driven bit reading, word-sized match copies) is the way to recover the time; it is recorded in PLAN.md.
+Linux runs payloads up to 64 MiB from a memfd and decodes them on every start, so each start there costs about 3 ms more per MB of payload (wall time per MB rebuilt went from 2.4 ms to 5.6 ms in the run above); a 3 MB app starts about 10 ms later. Other systems and larger payloads decode once into the cache. A decoder written for both size and speed (table-driven bit reading, word-sized match copies) is the way to recover the time; it is recorded in PLAN.md. Zig 0.16's `std.compress.zstd` was also tried: it decodes `--patch-from` deltas when the reference is placed in its output buffer ahead of the write position, but a ReleaseSmall test program is 203 KB and took 0.41 s of CPU for 30 MB, against 0.10 s for the educational decoder.
 
 Smaller runtimes also move `--layout auto`'s break-even: the five-target P2 probe set is now smaller as zstd (83,432 bytes against 107,648 raw), so P3 and P4, which test the raw layout, pass `--layout raw`.
 
@@ -634,3 +634,17 @@ It builds apps. On Linux it built P2 for x64musl, arm64musl, x64mac, arm64mac an
 Its output matches native `roc`'s, with two properties of Roc that look like differences at first. Native `roc` produced a 10,096-byte x64musl P2 executable with a warm Roc cache and a 10,128-byte one with an empty cache, so Roc's output depends on the state of its own cache; the container's first build, with an empty cache, was byte-identical to native `roc` with an empty cache. Roc's x64win output differs between any two builds at byte 129, inside the PE header's `TimeDateStamp`.
 
 basic-cli 0.25.0's Windows target also fails to link on the Windows host (no Visual Studio installed there): `lld-link` reports undefined `mainCRTStartup` and `memcpy`, the Microsoft C runtime. On the Mac, the same basic-cli app builds for arm64mac, x64mac and x64musl.
+
+**Second pass (2026-10-16).** Two cuts found with `nm --size-sort` on an unstripped build: `std.hash.XxHash64` compiled to 3,675 bytes, so `src/xxh64.zig` replaces it with a plain-loop XXH64 (differential-tested against the standard library over lengths 0-300 and up to 70,000 bytes, two seeds); and the decoder's unused public functions (dictionary parsing, the plain decompress entry points) stayed linked until the runtime's C files were compiled with `-ffunction-sections -fdata-sections`. Rebuild time for the 250 MB payload is unchanged (1.43-1.45 s wall).
+
+| Runtime | First pass (bytes, gzipped) | Second pass |
+| --- | --- | --- |
+| linux-x86_64 | 14,475 | 12,891 |
+| linux-aarch64 | 14,756 | 12,747 |
+| freebsd-x86_64 | 14,531 | 12,983 |
+| freebsd-aarch64 | 14,599 | 12,665 |
+| netbsd-x86_64 | 15,309 | 13,765 |
+| macos-x86_64 | 14,399 | 13,505 |
+| macos-arm64 | 14,400 | 13,450 |
+
+P7's gate is now 14,500 bytes.

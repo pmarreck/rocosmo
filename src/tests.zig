@@ -5,6 +5,7 @@ test {
 	_ = @import("zstd_decode.zig");
 	_ = @import("zstd_encode.zig");
 	_ = @import("zstd_small.zig");
+	_ = @import("xxh64.zig");
 	_ = @import("index.zig");
 	_ = @import("targets.zig");
 	_ = @import("rt_ffi.zig");

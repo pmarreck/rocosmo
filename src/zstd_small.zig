@@ -1,15 +1,17 @@
 //! The runtimes' zstd decoder: Meta's single-file educational decoder
 //! (zstd's doc/educational_decoder, wrapped by zdec_small.c) plus a content
-//! checksum check, which that decoder skips. It is about a third the size of
-//! space-optimized libzstd and about a third its speed (RESEARCH.md §15:
-//! 4.4 ms of CPU per MB against 1.2 on x86_64). Decodes whole frames and
-//! `--patch-from` deltas whose reference is a raw-content prefix.
+//! checksum check (xxh64.zig), which that decoder skips. It is about a third
+//! the size of space-optimized libzstd and about a third its speed
+//! (RESEARCH.md §15: 4.4 ms of CPU per MB against 1.2 on x86_64). Decodes
+//! whole frames and `--patch-from` deltas whose reference is a raw-content
+//! prefix.
 //!
 //! Structural corruption is fatal: the decoder calls rocosmo_zdec_fail(),
 //! which the runtime defines to report and exit. Errors returned here are the
 //! ones found before or after decoding (size, trailing bytes, checksum).
 
 const std = @import("std");
+const xxh64 = @import("xxh64.zig");
 
 extern fn rocosmo_zdec(dst: [*]u8, dst_len: usize, src: [*]const u8, src_len: usize, ref: ?[*]const u8, ref_len: usize) usize;
 extern fn rocosmo_zdec_content_size(src: [*]const u8, src_len: usize) u64;
@@ -40,7 +42,7 @@ pub fn decode(frame: []const u8, reference: ?[]const u8, out: []u8) DecodeError!
 	if (n == unknown_size) return error.Corrupt; // trailing bytes after the frame
 	if (n != out.len) return error.SizeMismatch;
 	const stored = std.mem.readInt(u32, frame[frame.len - checksum_len ..][0..checksum_len], .little);
-	if (@as(u32, @truncate(std.hash.XxHash64.hash(0, out))) != stored) return error.Corrupt;
+	if (@as(u32, @truncate(xxh64.hash(0, out))) != stored) return error.Corrupt;
 }
 
 // ---------------------------------------------------------------------------
