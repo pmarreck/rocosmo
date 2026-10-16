@@ -4,13 +4,13 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Publishing (BDFN, 2026-10-14)
 
-- [x] Zstandard BSD notice: THIRD_PARTY_NOTICES.md plus a license-URL comment in zstd containers, not the full text (done 2026-10-14 17:15 EDT)
 - [x] `rocosmo` command in Roc on basic-cli (src/rocosmo): builds the targets the platform declares, then packs; universal with a Windows target, else POSIX-only (done 2026-10-16 00:40 EDT)
 - [ ] basic-cli 0.25.0: macOS targets build on a Mac (verified 2026-10-16) but not from Linux (no libSystem stub); x64win needs Microsoft's C runtime libraries and fails on Linux, macOS and the Windows host alike (RESEARCH.md §16). Platform's responsibility; rocosmo stops with Roc's error.
 - [x] TECHNIQUE.md: both formats, dispatcher, layouts, memfd, limits; linked from the README, trampoline lines checked against the packer (done 2026-10-16 10:28 EDT)
 - [x] Roc compiler as one container: scripts/build-roc-container, five nightlies, 400 MB at level 19; runs and builds apps on Linux, macOS (native, Rosetta 2) and Windows; RESEARCH.md §16 (done 2026-10-16 10:47 EDT)
 - [ ] Shrink universal containers with a large Windows image: a small x64 PE launcher that rebuilds the compressed real PE into a per-user cache and runs it (the Roc container would lose most of its 252 MB raw PE). Shares its design with the Windows ARM64 relay.
-- [ ] Ship rocosmo-pack and the rocosmo command as containers too, so the Roc container plus these two build more containers on any OS without Nix.
+- [x] rocosmo-pack as one container: scripts/build-pack-container, eight targets, 1.6 MB; runs on Linux, macOS, Windows and in the BSD VMs; packs byte-identically on Linux, macOS and Windows (binary stdio on Windows fixed) (done 2026-10-16 10:58 EDT)
+- [ ] The rocosmo command as a container: blocked on basic-cli (no Windows link anywhere; macOS targets only on a Mac). Alternatives: build its macOS slots on the Mac host, or move it to a platform that cross-builds every target.
 - [x] Shrink the per-OS/CPU runtimes: zstd's educational decoder, 23.6-28.4 KB to 14.4-15.3 KB gzipped, P7 gate 16,000 bytes; RESEARCH.md §15 (done 2026-10-16 10:19 EDT)
 - [ ] Recover the decode speed the small decoder lost (about 3x slower; +3 ms per MB on each Linux memfd start): a size-and-speed decoder, differential-tested against libzstd (RESEARCH.md §15).
 - [ ] Push each finished step to GitHub (BDFN, 2026-10-16): new private repo, visibility left for BDFN to change.

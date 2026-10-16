@@ -27,6 +27,8 @@ for layout in zstd raw; do
 done
 run_capture "$pack_bin" "${pack_args[@]}" --layout zstd --app-id dev.rocosmo.p9 -o "$p9/bundle/app-posix"
 assert_rc0 "pack the BSD payloads as a POSIX-only container"
+run_capture "$ROOT/scripts/build-pack-container" "$p9/bundle/rocosmo-pack"
+assert_rc0 "build rocosmo-pack as a container for the guests"
 cp "$vm/guest.sh" "$p9/bundle/"
 
 # Boot the guests concurrently; each prints the guest script's output.
@@ -49,6 +51,7 @@ p9_check() { # OS
 	case "$out" in *"cache files=2"*) pass "$os: the zstd cache holds the runtime and one payload";; *) fail "$os cache contents" "$out";; esac
 	case "$out" in *"== posix"*"hello $os [p]"*"rc=0"*) pass "$os: the POSIX-only container runs directly through its #!/bin/sh line";; *) fail "$os POSIX-only direct run" "$out";; esac
 	case "$out" in *"== posix-sh"*"hello $os [q]"*"rc=0"*) pass "$os: the base sh runs the POSIX-only container";; *) fail "$os POSIX-only sh run" "$out";; esac
+	case "$out" in *"== pack"*"rocosmo-pack "*"($os)"*"rc=0"*) pass "$os: the rocosmo-pack container runs its $os build";; *) fail "$os rocosmo-pack container" "$out";; esac
 }
 for os in freebsd-x86_64 netbsd-x86_64 freebsd-aarch64; do p9_check "$os"; done
 case "$(cat "$p9/netbsd-x86_64.out")" in *"== ksh"*"hello netbsd-x86_64 [k]"*"rc=0"*) pass "netbsd-x86_64: base ksh runs the container too";; *) fail "netbsd ksh run" "$(cat "$p9/netbsd-x86_64.out")";; esac

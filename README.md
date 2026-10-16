@@ -10,7 +10,7 @@ app.exe              # the same file, renamed, on Windows
 
 Each machine runs a real native executable, built for that OS and CPU by Roc's own cross-compiler. Nothing is interpreted or emulated, and nothing needs installing first: the file uses only tools in every base system (`sh`, `dd`, `uname` and a few others).
 
-The packer works for any native executables, not only Roc ones. As a demonstration, `scripts/build-roc-container` turns the Roc compiler itself into one file that runs `roc` on Linux, macOS and Windows.
+The packer works for any native executables, not only Roc ones. `scripts/build-roc-container` turns the Roc compiler itself into one file that runs `roc` on Linux, macOS and Windows, and `scripts/build-pack-container` does the same for `rocosmo-pack`.
 
 ## How it works
 
@@ -71,6 +71,8 @@ rocosmo-pack -v \
 ```
 
 To get inputs to try it with, `probes/p2_native_targets/build OUTDIR` builds a small Roc test app for every target.
+
+`scripts/build-pack-container OUT` packs `rocosmo-pack` itself into one 1.6 MB file for all eight targets, so it runs without Nix or Zig on every system in the table above. The tests run it on Linux, macOS, Windows, FreeBSD and NetBSD, and on Linux, macOS and Windows its containers are byte-identical to the ones the native build writes.
 
 ### The Roc compiler in one file
 

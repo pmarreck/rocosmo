@@ -98,7 +98,8 @@ pub fn build(b: *std.Build) void {
 	lib_mod.addImport("runtimes", runtimesModule(b, zstd_src, version));
 	const lib = b.addLibrary(.{ .name = "rocosmo", .root_module = lib_mod, .linkage = .static });
 
-	const exe_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+	const strip = b.option(bool, "strip", "Strip debug info from rocosmo-pack (default: false)") orelse false;
+	const exe_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .strip = strip });
 	exe_mod.addCSourceFile(.{ .file = b.path("src/rocosmo_pack.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
 	exe_mod.addIncludePath(b.path("src"));
 	exe_mod.addCMacro("ROCOSMO_VERSION", "\"" ++ version ++ "\"");

@@ -44,3 +44,4 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 - [x] [Recently done] No APE/Cosmopolitan dependency (BDFN, 2026-10-13 11:55 PM EDT): P1 cosmocc probe retired from `./test`, `cosmocc` dropped from the flake, findings kept in RESEARCH.md, Cosmopolitan and APE (Justine Tunney) credited in README.md (2026-10-14 12:35 AM EDT).
 - [x] [Publishing (BDFN, 2026-10-14)] Two formats: universal (MZ/PE + sh) and POSIX-only (#!/bin/sh, no PE) when no Windows target is given; raw execve runs the POSIX-only one. RESEARCH.md §14 (done 2026-10-14 13:05 EDT, 0ceb5de)
 - [x] [Publishing (BDFN, 2026-10-14)] Add an MIT license (copyright holder: the git author) (done 2026-10-14 14:45 EDT)
+- [x] [Publishing (BDFN, 2026-10-14)] Zstandard BSD notice: THIRD_PARTY_NOTICES.md plus a license-URL comment in zstd containers, not the full text (done 2026-10-14 17:15 EDT)

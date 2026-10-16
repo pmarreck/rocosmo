@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Build rocosmo-pack itself as one rocosmo container: cross-built (stripped,
+# ReleaseFast) for every target it packs, Windows included, then packed by
+# this host's rocosmo-pack. Name it rocosmo-pack.exe on Windows.
+# Usage: scripts/build-pack-container OUT
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -z "${IN_NIX_SHELL-}" ]; then
+	exec nix develop "$root" -c "$root/scripts/build-pack-container" "$@"
+fi
+case "${1-}" in
+	-h|--help) sed -n '2,5p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+	""|-*) printf 'usage: build-pack-container OUT\n' >&2; exit 2;;
+esac
+out="$1"
+work="$(mktemp -d "${TMPDIR:-/tmp}/rocosmo-pack-container.XXXXXX")"
+# rocosmo-pack slot, Zig target triple
+targets=(
+	"windows-x86_64 x86_64-windows-gnu"
+	"linux-x86_64 x86_64-linux-musl"
+	"linux-aarch64 aarch64-linux-musl"
+	"macos-x86_64 x86_64-macos"
+	"macos-arm64 aarch64-macos"
+	"freebsd-x86_64 x86_64-freebsd"
+	"freebsd-aarch64 aarch64-freebsd"
+	"netbsd-x86_64 x86_64-netbsd"
+)
+args=()
+cd "$root" || exit 1
+for pair in "${targets[@]}"; do
+	read -r slot triple <<<"$pair"
+	zig build -Dtarget="$triple" -Dstrip=true --prefix "$work/$slot" --summary none || { echo "build-pack-container: cannot build for $triple" >&2; exit 1; }
+	exe="$work/$slot/bin/rocosmo-pack"; [ "$slot" = windows-x86_64 ] && exe="$exe.exe"
+	args+=("--$slot" "$exe")
+done
+zig build --summary none || exit 1
+"$root/zig-out/bin/rocosmo-pack" "${args[@]}" --app-id dev.rocosmo.pack -o "$out"
+status=$?
+rm -rf -- "$work" # this script's own scratch builds
+exit $status

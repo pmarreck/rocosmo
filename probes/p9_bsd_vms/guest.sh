@@ -18,3 +18,5 @@ layout=posix
 run posix ./app-posix p
 run posix-sh sh ./app-posix q
 if command -v ksh >/dev/null; then run posix-ksh ksh ./app-posix r; fi
+layout=pack
+run pack ./rocosmo-pack --about

@@ -5,6 +5,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+/* Containers are binary: on Windows, stdin and stdout start in text mode,
+ * which would translate CR/LF and stop reading at ^Z. */
+static FILE *binary_stream(FILE *f) {
+#ifdef _WIN32
+	_setmode(_fileno(f), _O_BINARY);
+#endif
+	return f;
+}
 
 #ifndef ROCOSMO_VERSION
 #define ROCOSMO_VERSION "0.0.0"
@@ -49,7 +62,7 @@ static void usage(FILE *f) {
 
 static int read_all(const char *path, uint8_t **buf, size_t *len) {
 	int is_stdin = !strcmp(path, "-") || !strcmp(path, "@stdin");
-	FILE *f = is_stdin ? stdin : fopen(path, "rb");
+	FILE *f = is_stdin ? binary_stream(stdin) : fopen(path, "rb");
 	if (!f) return -1;
 	size_t cap = 1 << 16, n = 0;
 	uint8_t *b = malloc(cap);
@@ -74,7 +87,7 @@ static int read_all(const char *path, uint8_t **buf, size_t *len) {
 
 static int write_out(const char *path, const uint8_t *data, size_t len) {
 	int to_stdout = !strcmp(path, "-") || !strcmp(path, "@stdout");
-	FILE *f = to_stdout ? stdout : fopen(path, "wb");
+	FILE *f = to_stdout ? binary_stream(stdout) : fopen(path, "wb");
 	if (!f) return -1;
 	if (fwrite(data, 1, len, f) != len || (to_stdout ? fflush(f) : fclose(f))) return -1;
 	if (!to_stdout) chmod(path, 0755);
