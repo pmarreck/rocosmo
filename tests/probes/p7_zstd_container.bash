@@ -20,7 +20,8 @@ printf '%s' "$err" > "$p7/zstd.err"
 run_capture file -b "$p7/app"
 case "$out" in *PE32+*x86-64*) pass "zstd container is still a PE32+ x86-64 image";; *) fail "PE identity" "$out";; esac
 
-run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" "${targets[@]}" -v -o "$p7/auto-small"
+# One small Linux payload: the runtime (about 14 KB gzipped) outweighs what zstd saves.
+run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" --linux-x86_64 "$p2_out/app-x64musl" -v -o "$p7/auto-small"
 case "$err" in *"layout raw:"*) pass "auto keeps the raw layout when it is smaller (tiny payloads)";; *) fail "auto picks raw for tiny payloads" "$err";; esac
 big="$pack_bin"  # a 3 MB executable stands in for a large payload; it is never run here
 # A PE whose ROCOSMO_APP_ID declaration is defused, so no input declares an id.
@@ -103,11 +104,12 @@ case "$rc:$err" in "1:rocosmo-runtime: plan9-mips: "?*) pass "runtime refuses a 
 : > "$p7/rt-exists"
 run_capture "$rt" "$app" ${xy% *} ${xy#* } linux-x86_64 "$p7/rt-exists"
 assert_eq "runtime never overwrites an existing OUT" "1:rocosmo-runtime: $p7/rt-exists: File exists" "$rc:$err"
-# Size gate: without musl the Linux runtimes should cost about what the
-# macOS ones (libSystem, dynamically linked) do.
-for t in linux-x86_64 linux-aarch64; do
+# Size gate: every runtime, with the small zstd decoder, is 14.4-15.3 KB
+# gzipped (RESEARCH.md section 15); the gate leaves under 1 KB of headroom.
+rt_gate=16000
+for t in linux-x86_64 linux-aarch64 macos-x86_64 macos-arm64 freebsd-x86_64 freebsd-aarch64 netbsd-x86_64; do
 	gz=$(gzip -9 -n -c "$rt_dir/$t" | wc -c)
-	[ "$gz" -le 28000 ] && pass "$t runtime is at most 28000 bytes gzipped ($gz)" || fail "$t runtime gzipped size" "$gz > 28000"
+	[ "$gz" -le "$rt_gate" ] && pass "$t runtime is at most $rt_gate bytes gzipped ($gz)" || fail "$t runtime gzipped size" "$gz > $rt_gate"
 done
 
 # --- linux aarch64: runtime and payload under qemu-user (emulation) ---

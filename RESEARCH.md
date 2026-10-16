@@ -582,3 +582,25 @@ cannot have a shebang, because Windows requires `MZ` at offset 0.
 Verified: the six-shell matrix (P3), Linux memory execution and the cache
 fallback (P7), direct `./app` on macOS arm64 (P3), and direct runs plus base
 `sh` on FreeBSD x86_64/aarch64 and NetBSD x86_64, plus NetBSD `ksh` (P9).
+
+## 15. Smaller runtimes: zstd's educational decoder (2026-10-16)
+
+The runtimes now decode with Meta's single-file educational decoder (`doc/educational_decoder/zstd_decompress.c` in the zstd repository, same BSD license) instead of space-optimized libzstd. `src/zdec_small.c` compiles it as one translation unit, prefixes its public names, passes a `--patch-from` reference to it in place as a raw-content dictionary (no copy), and redirects its `exit(1)` on corruption to `rocosmo_zdec_fail()`, which the runtime defines to report and exit with its usual status (126 under `--exec`, else 1). The decoder skips the content checksum, so `src/zstd_small.zig` checks it with `std.hash.XxHash64` and requires it to be present; a wrong delta reference is still rejected. Unit tests decode libzstd-encoded frames and deltas at levels 1, 3 and 19 and compare bytes.
+
+| Runtime | Before (bytes, gzipped) | After |
+| --- | --- | --- |
+| linux-x86_64 | 27,479 | 14,475 |
+| linux-aarch64 | 27,502 | 14,756 |
+| freebsd-x86_64 | 27,703 | 14,531 |
+| freebsd-aarch64 | 27,541 | 14,599 |
+| netbsd-x86_64 | 28,429 | 15,309 |
+| macos-x86_64 | 24,571 | 14,399 |
+| macos-arm64 | 23,640 | 14,400 |
+
+P7 gates all seven at 16,000 bytes.
+
+**Cost: decoding is about three times slower.** Rebuilding the 250 MB Roc compiler (x86_64 Linux, AMD Threadripper 3990X, `--level 3` frame, `/usr/bin/time`, three runs each, identical output): libzstd runtime 0.27-0.31 s user, 0.29-0.31 s system, 0.59-0.61 s wall; small decoder 1.10-1.11 s user, 0.28 s system, 1.39-1.40 s wall. The first small-decoder build spent 0.8 s in system time: the decoder allocates and frees a few tables per 128 KB block, and `nolibc_linux.c` mapped each block separately (61,188 mmap/munmap pairs, counted with `strace -c`). Keeping up to eight freed mappings of at most 1 MiB for reuse removed that for about 150 gzipped bytes. In the same profile, `perf` attributes 45% of samples to `decode_frame` (sequence decoding, inlined) and 26% to `HUF_decompress_1stream`; compiling the decoder at `-O2` or `-O3` instead of `-Os` changed user time by under 10% and added about 2 KB gzipped, so it stays at `-Os`.
+
+Linux runs payloads up to 64 MiB from a memfd and decodes them on every start, so each start there costs about 3 ms more per MB of payload (wall time per MB rebuilt went from 2.4 ms to 5.6 ms in the run above); a 3 MB app starts about 10 ms later. Other systems and larger payloads decode once into the cache. A decoder written for both size and speed (table-driven bit reading, word-sized match copies) is the way to recover the time; it is recorded in PLAN.md.
+
+Smaller runtimes also move `--layout auto`'s break-even: the five-target P2 probe set is now smaller as zstd (83,432 bytes against 107,648 raw), so P3 and P4, which test the raw layout, pass `--layout raw`.

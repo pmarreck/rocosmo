@@ -1,10 +1,10 @@
 //! C ABI of the runtime core (rocosmo_rt.h): index validation, rebuild
 //! planning and zstd decoding, with no I/O. Linked into every per-OS/CPU
-//! runtime together with the space-optimized, decode-only zstd.
+//! runtime together with the small zstd decoder (zstd_small.zig).
 
 const std = @import("std");
 const index = @import("index.zig");
-const zdec = @import("zstd_decode.zig");
+const zdec = @import("zstd_small.zig");
 
 /// C malloc/free: from the C library, or from nolibc_linux.c in the libc-free
 /// Linux runtimes (where std.heap.c_allocator is unavailable).

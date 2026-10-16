@@ -11,8 +11,8 @@ p2_out="${p2_out:-$SCRATCH/p2}"
 
 run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" \
 	--linux-x86_64 "$p2_out/app-x64musl" --linux-aarch64 "$p2_out/app-arm64musl" \
-	--macos-x86_64 "$p2_out/app-x64mac" --macos-arm64 "$p2_out/app-arm64mac" -o "$p3/app"
-assert_rc0 "pack all payloads into one file"
+	--macos-x86_64 "$p2_out/app-x64mac" --macos-arm64 "$p2_out/app-arm64mac" --layout raw -o "$p3/app"
+assert_rc0 "pack all payloads into one file (raw layout; P7 covers zstd)"
 app="$p3/app"
 appd="rocosmo/dev.rocosmo.probe"  # the probe app declares ROCOSMO_APP_ID=dev.rocosmo.probe;
 

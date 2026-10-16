@@ -61,6 +61,7 @@ static long ret(long r) {
 _Noreturn static void exit_group(int code) {
 	for (;;) SYS(SYS_exit_group, code, 0, 0, 0, 0, 0);
 }
+_Noreturn void _exit(int code) { exit_group(code); }
 
 /* Entry from _start with the initial stack: argc, argv..., NULL, envp..., NULL. */
 _Noreturn void rocosmo_start(long *sp) {
@@ -106,24 +107,53 @@ int memfd_create(const char *name, unsigned flags) { return (int)ret(SYS(SYS_mem
 int execve(const char *path, char *const argv[], char *const envp[]) { return (int)ret(SYS(SYS_execve, path, argv, envp, 0, 0, 0)); }
 int fexecve(int fd, char *const argv[], char *const envp[]) { return (int)ret(SYS(SYS_execveat, fd, "", argv, envp, AT_EMPTY_PATH, 0)); }
 
-/* Each block is its own mapping with a 16-byte header holding the mapping size. */
+/* Each block is its own mapping with a 16-byte header holding the mapping
+ * size. The zstd decoder allocates and frees a few small tables per 128 KB
+ * block, so freed mappings up to SPARE_MAX are kept in SPARES slots and
+ * reused: rebuilding a 250 MB payload otherwise makes 61k mmap/munmap pairs. */
 #define HEADER 16
-void *malloc(size_t n) {
+#define SPARES 8
+#define SPARE_MAX ((size_t)1 << 20)
+static char *spare[SPARES];
+
+/* A block of at least n bytes; *fresh says whether it is a new (zeroed) mapping. */
+static void *alloc(size_t n, int *fresh) {
 	if (n > SIZE_MAX - HEADER) { errno_value = ENOMEM; return NULL; }
 	size_t total = n + HEADER;
+	int best = -1;
+	for (int i = 0; i < SPARES; i++)
+		if (spare[i] && *(size_t *)spare[i] >= total && (best < 0 || *(size_t *)spare[i] < *(size_t *)spare[best])) best = i;
+	if (best >= 0) {
+		char *p = spare[best];
+		spare[best] = NULL;
+		*fresh = 0;
+		return p + HEADER;
+	}
 	long p = ret(SYS(SYS_mmap, 0, total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
 	if (p == -1) return NULL;
 	*(size_t *)p = total;
+	*fresh = 1;
 	return (char *)p + HEADER;
+}
+void *malloc(size_t n) {
+	int fresh;
+	return alloc(n, &fresh);
 }
 void *calloc(size_t count, size_t size) {
 	if (size && count > SIZE_MAX / size) { errno_value = ENOMEM; return NULL; }
-	return malloc(count * size); /* anonymous mappings are zero-filled */
+	int fresh;
+	void *p = alloc(count * size, &fresh);
+	if (p && !fresh) memset(p, 0, count * size); /* new mappings are already zero */
+	return p;
 }
 void free(void *p) {
 	if (!p) return;
 	char *base = (char *)p - HEADER;
-	SYS(SYS_munmap, base, *(size_t *)base, 0, 0, 0, 0);
+	size_t total = *(size_t *)base;
+	if (total <= SPARE_MAX)
+		for (int i = 0; i < SPARES; i++)
+			if (!spare[i]) { spare[i] = base; return; }
+	SYS(SYS_munmap, base, total, 0, 0, 0, 0);
 }
 
 size_t strlen(const char *s) {

@@ -63,6 +63,17 @@ static int fail(const char *what, const char *why) {
 	return 1;
 }
 
+/* Exit status when the zstd decoder meets corrupt data: 1 when writing a
+ * file, 126 (cannot execute) under --exec, as for the runtime's other errors. */
+static int corrupt_status = 1;
+
+/* Called by the small zstd decoder (zdec_small.c), which cannot return an
+ * error; nothing has been written to OUT or a memfd yet. */
+_Noreturn void rocosmo_zdec_fail(void) {
+	SAY(2, "rocosmo-runtime: cannot decode the payload: corrupt data or out of memory\n");
+	_exit(corrupt_status);
+}
+
 static const char usage_file[] = "rocosmo-runtime CONTAINER INDEX_OFFSET INDEX_LEN TARGET OUT";
 static const char usage_exec[] = "rocosmo-runtime --exec CONTAINER INDEX_OFFSET INDEX_LEN TARGET ARGV0 [ARG]...";
 
@@ -202,6 +213,7 @@ static int fall_back(char *container, char **args) {
 /* --exec CONTAINER INDEX_OFFSET INDEX_LEN TARGET ARGV0 [ARG]... */
 static int to_memory(int argc, char **argv) {
 	if (argc < 7) return usage_error(usage_exec);
+	corrupt_status = 126;
 	char *container = argv[2], **app_argv = argv + 6;
 #ifdef __linux__
 	const char *name = argv[5];

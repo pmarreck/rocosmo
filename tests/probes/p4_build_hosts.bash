@@ -13,7 +13,7 @@ else
 	rev="$(git -C "$ROOT" rev-parse --short HEAD)"
 	dir="/tmp/rocosmo-p4-$rev-$$"
 	inputs='--windows-x86_64 out/p2/app-x64win.exe --linux-x86_64 out/p2/app-x64musl --linux-aarch64 out/p2/app-arm64musl --macos-x86_64 out/p2/app-x64mac --macos-arm64 out/p2/app-arm64mac'
-	pack_args="$inputs -o out/app"
+	pack_args="$inputs --layout raw -o out/app"
 	p2="${p2_out:-$SCRATCH/p2}"
 	inputs_local=(--windows-x86_64 "$p2/app-x64win.exe" --linux-x86_64 "$p2/app-x64musl" --linux-aarch64 "$p2/app-arm64musl" --macos-x86_64 "$p2/app-x64mac" --macos-arm64 "$p2/app-arm64mac")
 	run_capture bash -c "set -o pipefail; cd '$ROOT' && git ls-files -z | tar --null -T - -cf - | ssh ${SSH_OPTS[*]} '$host' 'mkdir -p $dir && tar -x -C $dir'"

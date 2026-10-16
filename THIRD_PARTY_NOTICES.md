@@ -1,6 +1,6 @@
 # Third-party notices
 
-`rocosmo-pack` and every container built with `--layout zstd` include code from Zstandard (decoder runtimes in containers; encoder and decoder in `rocosmo-pack`). Zstandard is dual-licensed BSD or GPLv2; rocosmo uses it under the BSD license below. If you redistribute those binaries, include this notice with them. Containers built with `--layout raw` contain no Zstandard code.
+`rocosmo-pack` and every container built with `--layout zstd` include code from Zstandard: the runtimes inside containers use its educational decoder (`doc/educational_decoder`), and `rocosmo-pack` uses its library (`lib/`, encoder and decoder) and embeds those runtimes. Zstandard is dual-licensed BSD or GPLv2; rocosmo uses it under the BSD license below. If you redistribute those binaries, include this notice with them. Containers built with `--layout raw` contain no Zstandard code.
 
 Source: <https://github.com/facebook/zstd>, built from the `zstdz` flake input pinned in `flake.lock`.
 

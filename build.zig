@@ -4,17 +4,20 @@ const zstd_common = [_][]const u8{ "common/entropy_common.c", "common/error_priv
 const zstd_decompress = [_][]const u8{ "decompress/huf_decompress.c", "decompress/zstd_ddict.c", "decompress/zstd_decompress.c", "decompress/zstd_decompress_block.c" };
 const zstd_compress = [_][]const u8{ "compress/fse_compress.c", "compress/hist.c", "compress/huf_compress.c", "compress/zstd_compress.c", "compress/zstd_compress_literals.c", "compress/zstd_compress_sequences.c", "compress/zstd_compress_superblock.c", "compress/zstd_double_fast.c", "compress/zstd_fast.c", "compress/zstd_lazy.c", "compress/zstd_ldm.c", "compress/zstd_opt.c", "compress/zstd_preSplit.c" };
 
-/// Add zstd C sources (lib/ of the zstdz flake input) to a module. `full`
-/// adds the encoder; the decode-only variant uses upstream's space-optimizing
-/// switches (lib/README.md) because it ships inside every runtime.
-fn addZstd(b: *std.Build, mod: *std.Build.Module, src: []const u8, full: bool) void {
+/// Add libzstd (lib/ of the zstdz flake input), encoder and decoder, to a
+/// module: the packer's half.
+fn addZstd(b: *std.Build, mod: *std.Build.Module, src: []const u8) void {
 	const lib: std.Build.LazyPath = .{ .cwd_relative = b.pathJoin(&.{ src, "lib" }) };
 	mod.addIncludePath(lib);
-	const common_flags = [_][]const u8{ "-DZSTD_LEGACY_SUPPORT=0", "-DZSTD_DISABLE_ASM", "-DZSTD_TRACE=0" };
-	const small_flags = common_flags ++ [_][]const u8{ "-DHUF_FORCE_DECOMPRESS_X1", "-DZSTD_FORCE_DECOMPRESS_SEQUENCES_SHORT", "-DZSTD_NO_INLINE", "-DZSTD_STRIP_ERROR_STRINGS" };
-	const flags: []const []const u8 = if (full) &common_flags else &small_flags;
-	mod.addCSourceFiles(.{ .root = lib, .files = &(zstd_common ++ zstd_decompress), .flags = flags });
-	if (full) mod.addCSourceFiles(.{ .root = lib, .files = &zstd_compress, .flags = flags });
+	const flags = [_][]const u8{ "-DZSTD_LEGACY_SUPPORT=0", "-DZSTD_DISABLE_ASM", "-DZSTD_TRACE=0" };
+	mod.addCSourceFiles(.{ .root = lib, .files = &(zstd_common ++ zstd_decompress ++ zstd_compress), .flags = &flags });
+}
+
+/// Add the runtimes' small decoder: src/zdec_small.c, which compiles zstd's
+/// educational decoder (doc/educational_decoder of the zstdz input) as one unit.
+fn addZstdSmall(b: *std.Build, mod: *std.Build.Module, src: []const u8) void {
+	mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ src, "doc", "educational_decoder" }) });
+	mod.addCSourceFile(.{ .file = b.path("src/zdec_small.c"), .flags = &.{"-std=c11"} });
 }
 
 /// musl's Linux headers from Zig's own lib directory, for C compiled without
@@ -42,7 +45,7 @@ const runtime_targets = [_][2][]const u8{
 };
 
 /// Cross-build rocosmo-runtime for every target (ReleaseSmall, stripped,
-/// decode-only zstd), install each under zig-out/runtime/, gzip it with
+/// small zstd decoder), install each under zig-out/runtime/, gzip it with
 /// `gzip -9 -n` (no name or timestamp, so output is reproducible) and expose
 /// the gzipped bytes as the generated "runtimes" module for the packer.
 fn runtimesModule(b: *std.Build, zstd_src: []const u8, version: []const u8) *std.Build.Module {
@@ -57,7 +60,7 @@ fn runtimesModule(b: *std.Build, zstd_src: []const u8, version: []const u8) *std
 		const libc = t.result.os.tag != .linux;
 		const core = b.createModule(.{ .root_source_file = b.path("src/rt_ffi.zig"), .target = t, .optimize = .ReleaseSmall, .link_libc = libc, .strip = true, .single_threaded = true, .unwind_tables = .none });
 		if (!libc) addMuslHeaders(b, core, t.result.cpu.arch);
-		addZstd(b, core, zstd_src, false);
+		addZstdSmall(b, core, zstd_src);
 		const core_lib = b.addLibrary(.{ .name = "rocosmo_rt", .root_module = core, .linkage = .static });
 		const mod = b.createModule(.{ .target = t, .optimize = .ReleaseSmall, .link_libc = libc, .strip = true, .single_threaded = true, .unwind_tables = .none });
 		if (!libc) {
@@ -91,7 +94,7 @@ pub fn build(b: *std.Build) void {
 		b.graph.environ_map.get("ROCOSMO_ZSTD_SRC") orelse @panic("set -Dzstd-src or run inside nix develop");
 
 	const lib_mod = b.createModule(.{ .root_source_file = b.path("src/ffi.zig"), .target = target, .optimize = optimize, .link_libc = true });
-	addZstd(b, lib_mod, zstd_src, true);
+	addZstd(b, lib_mod, zstd_src);
 	lib_mod.addImport("runtimes", runtimesModule(b, zstd_src, version));
 	const lib = b.addLibrary(.{ .name = "rocosmo", .root_module = lib_mod, .linkage = .static });
 
@@ -106,7 +109,8 @@ pub fn build(b: *std.Build) void {
 	b.installArtifact(exe);
 
 	const test_mod = b.createModule(.{ .root_source_file = b.path("src/tests.zig"), .target = target, .optimize = optimize, .link_libc = true });
-	addZstd(b, test_mod, zstd_src, true);
+	addZstd(b, test_mod, zstd_src);
+	addZstdSmall(b, test_mod, zstd_src);
 	const tests = b.addTest(.{ .root_module = test_mod });
 	const test_step = b.step("test", "Run core unit tests");
 	test_step.dependOn(&b.addRunArtifact(tests).step);
