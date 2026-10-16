@@ -11,7 +11,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 - [x] rocosmo-pack as one container: scripts/build-pack-container, eight targets, 1.6 MB; runs on Linux, macOS, Windows and in the BSD VMs; packs byte-identically on Linux, macOS and Windows (binary stdio on Windows fixed) (done 2026-10-16 10:58 EDT)
 - [ ] The rocosmo command as a container: blocked on basic-cli (no Windows link anywhere; macOS targets only on a Mac). Alternatives: build its macOS slots on the Mac host, or move it to a platform that cross-builds every target.
 - [x] Shrink the per-OS/CPU runtimes: zstd's educational decoder, 23.6-28.4 KB to 14.4-15.3 KB gzipped, P7 gate 16,000 bytes; RESEARCH.md §15 (done 2026-10-16 10:19 EDT)
-- [x] Runtimes, second pass: compact XXH64 and function sections, 12.7-13.8 KB gzipped, gate 14,500 (done 2026-10-16 11:10 EDT)
+- [x] Runtimes, second pass: compact XXH64, function sections and -Oz, 9.9-11.3 KB gzipped (decode 16% slower), gate 12,000; RESEARCH.md §15 (done 2026-10-16 11:19 EDT)
 - [ ] Recover the decode speed the small decoder lost (about 3x slower; +3 ms per MB on each Linux memfd start): a size-and-speed decoder, differential-tested against libzstd (RESEARCH.md §15).
 - [ ] Push each finished step to GitHub (BDFN, 2026-10-16): new private repo, visibility left for BDFN to change.
 - [ ] Attractive README showing the one-command use.

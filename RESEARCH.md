@@ -648,3 +648,17 @@ basic-cli 0.25.0's Windows target also fails to link on the Windows host (no Vis
 | macos-arm64 | 14,400 | 13,450 |
 
 P7's gate is now 14,500 bytes.
+
+**Third pass: `-Oz` (2026-10-16).** Zig compiles C at `-Os` for ReleaseSmall. Adding clang's `-Oz` to the runtime's C files (decoder, `runtime.c`, `nolibc_linux.c`) trades speed for size:
+
+| Runtime | Second pass (bytes, gzipped) | `-Oz` |
+| --- | --- | --- |
+| linux-x86_64 | 12,891 | 9,903 |
+| linux-aarch64 | 12,747 | 10,061 |
+| freebsd-x86_64 | 12,983 | 10,032 |
+| freebsd-aarch64 | 12,665 | 9,970 |
+| netbsd-x86_64 | 13,765 | 10,800 |
+| macos-x86_64 | 13,505 | 10,544 |
+| macos-arm64 | 13,450 | 11,245 |
+
+Rebuilding the 250 MB Roc payload takes 1.66-1.68 s wall (1.35-1.38 s user) instead of 1.43-1.45 s, about 6.7 ms per MB. The project's stated priority for these pieces is size, so `-Oz` stays; removing the three `-Oz` flags in `build.zig` restores the second pass. P7's gate is now 12,000 bytes.

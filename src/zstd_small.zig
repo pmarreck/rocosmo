@@ -2,7 +2,7 @@
 //! (zstd's doc/educational_decoder, wrapped by zdec_small.c) plus a content
 //! checksum check (xxh64.zig), which that decoder skips. It is about a third
 //! the size of space-optimized libzstd and about a third its speed
-//! (RESEARCH.md §15: 4.4 ms of CPU per MB against 1.2 on x86_64). Decodes
+//! (RESEARCH.md §15: 5.5 ms of CPU per MB at -Oz against 1.2 on x86_64). Decodes
 //! whole frames and `--patch-from` deltas whose reference is a raw-content
 //! prefix.
 //!

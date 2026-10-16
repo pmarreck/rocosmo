@@ -85,7 +85,7 @@ The result holds the pinned Roc nightly for Linux x86_64 and aarch64, macOS x86_
 
 ## Layouts
 
-`--layout raw` stores each executable as-is; the dispatcher copies it out with `dd`. `--layout zstd` stores each one as a [Zstandard](https://github.com/facebook/zstd) frame, or as a delta against a same-CPU executable or the Windows image, plus a small runtime per OS and CPU (about 13 KB gzipped) that rebuilds it. The default, `--layout auto`, builds both and keeps the smaller: raw for a single small payload, zstd once the payloads add up to a few tens of KB.
+`--layout raw` stores each executable as-is; the dispatcher copies it out with `dd`. `--layout zstd` stores each one as a [Zstandard](https://github.com/facebook/zstd) frame, or as a delta against a same-CPU executable or the Windows image, plus a small runtime per OS and CPU (about 10 KB gzipped) that rebuilds it. The default, `--layout auto`, builds both and keeps the smaller: raw for a single small payload, zstd once the payloads add up to a few tens of KB.
 
 On Linux the zstd layout runs the program from a sealed `memfd` instead of caching it, so only the shared runtime is ever written to disk, once per machine. Payloads over 64 MiB still go to the cache. If the kernel refuses (no `memfd_create`, `vm.memfd_noexec=2`, a security module), the runtime re-runs the file with `ROCOSMO_NO_MEMFD=1`, which selects the cache. Users can set that variable themselves too, and the app's child processes inherit it.
 

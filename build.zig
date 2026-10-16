@@ -17,7 +17,7 @@ fn addZstd(b: *std.Build, mod: *std.Build.Module, src: []const u8) void {
 /// educational decoder (doc/educational_decoder of the zstdz input) as one unit.
 fn addZstdSmall(b: *std.Build, mod: *std.Build.Module, src: []const u8) void {
 	mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ src, "doc", "educational_decoder" }) });
-	mod.addCSourceFile(.{ .file = b.path("src/zdec_small.c"), .flags = &.{ "-std=c11", "-ffunction-sections", "-fdata-sections" } });
+	mod.addCSourceFile(.{ .file = b.path("src/zdec_small.c"), .flags = &.{ "-std=c11", "-ffunction-sections", "-fdata-sections", "-Oz" } });
 }
 
 /// musl's Linux headers from Zig's own lib directory, for C compiled without
@@ -65,9 +65,9 @@ fn runtimesModule(b: *std.Build, zstd_src: []const u8, version: []const u8) *std
 		const mod = b.createModule(.{ .target = t, .optimize = .ReleaseSmall, .link_libc = libc, .strip = true, .single_threaded = true, .unwind_tables = .none });
 		if (!libc) {
 			addMuslHeaders(b, mod, t.result.cpu.arch);
-			mod.addCSourceFile(.{ .file = b.path("src/nolibc_linux.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-stack-protector", "-ffunction-sections", "-fdata-sections" } });
+			mod.addCSourceFile(.{ .file = b.path("src/nolibc_linux.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-stack-protector", "-ffunction-sections", "-fdata-sections", "-Oz" } });
 		}
-		mod.addCSourceFile(.{ .file = b.path("src/runtime.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-D_POSIX_C_SOURCE=200809L", "-D_DARWIN_C_SOURCE", "-D_BSD_SOURCE", "-ffunction-sections", "-fdata-sections" } });
+		mod.addCSourceFile(.{ .file = b.path("src/runtime.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-D_POSIX_C_SOURCE=200809L", "-D_DARWIN_C_SOURCE", "-D_BSD_SOURCE", "-ffunction-sections", "-fdata-sections", "-Oz" } });
 		mod.addIncludePath(b.path("src"));
 		mod.addCMacro("ROCOSMO_VERSION", b.fmt("\"{s}\"", .{version}));
 		mod.addCMacro("ROCOSMO_PLATFORM", b.fmt("\"{s}\"", .{rt[0]}));
