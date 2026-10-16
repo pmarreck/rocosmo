@@ -8,6 +8,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 - [x] Zstandard BSD notice: THIRD_PARTY_NOTICES.md plus a license-URL comment in zstd containers, not the full text (done 2026-10-14 17:15 EDT)
 - [ ] `rocosmo` command in Roc on basic-cli: build exactly the targets the app's platform declares, then pack (universal format when a Windows target exists, else POSIX-only).
 - [ ] TECHNIQUE.md: full technique write-up covering both formats, linked from the README.
+- [ ] Shrink the per-OS/CPU runtimes (zstd decode and payload rebuild) as far as possible; measure each against the current 27.5-38 KB gzipped (BDFN, 2026-10-15).
 - [ ] Attractive README showing the one-command use.
 - [ ] Audit all commits and tracked files for private details; push only after BDFN picks the remote.
 - [x] Two formats: universal (MZ/PE + sh) and POSIX-only (#!/bin/sh, no PE) when no Windows target is given; raw execve runs the POSIX-only one. RESEARCH.md §14 (done 2026-10-14 13:05 EDT, 0ceb5de)
@@ -20,7 +21,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Later
 
-- [ ] Ship the Roc compiler itself as a rocosmo container that produces rocosmo containers (BDFN idea, 2026-10-14).
+- [ ] Ship the Roc compiler as a rocosmo container covering every OS it targets, able to build more rocosmo containers (BDFN approved 2026-10-15).
 - [ ] Real platform package: per-OS libc-free Zig host with args, environment, I/O and a size-recording allocator.
 - [ ] Shared per-architecture code across OSes: analyzed in RESEARCH.md §7, not built.
 - [ ] Windows ARM64 native: relay from the x64 host to an embedded arm64 PE; test on Windows 11 on Arm hardware.
