@@ -15,3 +15,8 @@ else
 	fail "THIRD_PARTY_NOTICES.md carries Zstandard's BSD license" "missing"
 fi
 if grep -q '](THIRD_PARTY_NOTICES.md)' "$ROOT/README.md"; then pass "README links THIRD_PARTY_NOTICES.md"; else fail "README links THIRD_PARTY_NOTICES.md"; fi
+if grep -q '](TECHNIQUE.md)' "$ROOT/README.md"; then pass "README links TECHNIQUE.md"; else fail "README links TECHNIQUE.md"; fi
+# The technique write-up quotes the trampoline lines the packer emits; keep them in step.
+for line in 'MZ=;eval "$(dd if="$0" bs=64 skip=1 count=' 'eval "$(dd if="$0" bs=64 skip=2 count=' '# Contains Zstandard (BSD license): https://github.com/facebook/zstd/blob/dev/LICENSE'; do
+	if grep -qF -- "$line" "$ROOT/TECHNIQUE.md" 2>/dev/null && grep -qF -- "${line//\"/\\\"}" "$ROOT/src/pack.zig"; then pass "TECHNIQUE.md and the packer agree on: ${line:0:40}"; else fail "TECHNIQUE.md quotes the packer's line" "$line"; fi
+done

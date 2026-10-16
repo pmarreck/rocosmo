@@ -11,7 +11,7 @@ When a project has no Windows build, `rocosmo-pack` writes a POSIX-only containe
 
 ## Status
 
-Prototype. A probe app runs natively on Linux x86_64, macOS arm64 (Apple Silicon) and Windows x86_64 from the same bytes. FreeBSD 15.1 and NetBSD 11.0 x86_64 run it in KVM virtual machines, and FreeBSD aarch64 in an emulated one. The Linux aarch64 and macOS x86_64 payloads are verified only under qemu-user and Rosetta 2. Windows ARM64 runs the x64 code under Windows 11's emulator. See [RESEARCH.md](RESEARCH.md) for the full matrix, evidence and limits, and [APE_DISPATCH.md](APE_DISPATCH.md) for how the dispatch works.
+Prototype. A probe app runs natively on Linux x86_64, macOS arm64 (Apple Silicon) and Windows x86_64 from the same bytes. FreeBSD 15.1 and NetBSD 11.0 x86_64 run it in KVM virtual machines, and FreeBSD aarch64 in an emulated one. The Linux aarch64 and macOS x86_64 payloads are verified only under qemu-user and Rosetta 2. Windows ARM64 runs the x64 code under Windows 11's emulator. [TECHNIQUE.md](TECHNIQUE.md) explains how the file works, byte by byte. See [RESEARCH.md](RESEARCH.md) for the full matrix, evidence and limits, and [APE_DISPATCH.md](APE_DISPATCH.md) for how the dispatch compares with APE's.
 
 ## Use
 
