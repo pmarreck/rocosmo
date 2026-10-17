@@ -59,29 +59,32 @@
 						'';
 					};
 
-					# OpenBSD 7.9 amd64 C headers, crt objects and shared libraries,
-					# from the official base and comp sets (SHA256 as published), for
-					# cross-building the OpenBSD runtime: Zig ships no OpenBSD libc,
+					# OpenBSD 7.9 C headers, crt objects and shared libraries for each
+					# architecture (amd64 as x86_64/, arm64 as aarch64/), from the
+					# official base and comp sets (SHA256 as published), for
+					# cross-building the OpenBSD runtimes: Zig ships no OpenBSD libc,
 					# and OpenBSD pins system calls to libc's entry points.
-					openbsd-sysroot = pkgs.stdenvNoCC.mkDerivation {
-						pname = "openbsd-sysroot-amd64";
+					openbsd-sysroot = let
+						sets = {
+							x86_64 = { dir = "amd64"; base = "923d2e03f06408d50d4848334398c6d04b5514dcac7917badfc178a0eef248de"; comp = "21a67af20aebcabf85b09f4206fc95b4cae0a35d42b154b976f0159f457724f9"; };
+							aarch64 = { dir = "arm64"; base = "9a4b16701ec11103847ca314527de5caf5f811c1dbc0e348d56ed8e9d9f16cb1"; comp = "87d257a0e191a32fdebe9c2755e7245c81472f41456ea2fd1ca9832ed55fc417"; };
+						};
+						fetch = a: set: pkgs.fetchurl { url = "https://cdn.openbsd.org/pub/OpenBSD/7.9/${a.dir}/${set}79.tgz"; sha256 = a.${set}; };
+					in pkgs.stdenvNoCC.mkDerivation {
+						pname = "openbsd-sysroot";
 						version = "7.9";
-						srcs = [
-							(pkgs.fetchurl { url = "https://cdn.openbsd.org/pub/OpenBSD/7.9/amd64/base79.tgz"; sha256 = "923d2e03f06408d50d4848334398c6d04b5514dcac7917badfc178a0eef248de"; })
-							(pkgs.fetchurl { url = "https://cdn.openbsd.org/pub/OpenBSD/7.9/amd64/comp79.tgz"; sha256 = "21a67af20aebcabf85b09f4206fc95b4cae0a35d42b154b976f0159f457724f9"; })
-						];
 						dontUnpack = true;
 						dontConfigure = true;
 						dontBuild = true;
 						dontFixup = true;
-						installPhase = ''
-							set -- $srcs
-							mkdir -p $out
-							tar -xzf $1 -C $out ./usr/lib/crt0.o ./usr/lib/crtbegin.o ./usr/lib/crtend.o ./usr/lib/crtbeginS.o ./usr/lib/crtendS.o \
+						installPhase = nixpkgs.lib.concatStrings (nixpkgs.lib.mapAttrsToList (arch: a: ''
+							o=$out/${arch}
+							mkdir -p $o
+							tar -xzf ${fetch a "base"} -C $o ./usr/lib/crt0.o ./usr/lib/crtbegin.o ./usr/lib/crtend.o ./usr/lib/crtbeginS.o ./usr/lib/crtendS.o \
 								./usr/lib/libc.so.103.0 ./usr/lib/libm.so.10.1 ./usr/lib/libpthread.so.28.1 ./usr/lib/libutil.so.21.0
-							tar -xzf $2 -C $out --exclude=./usr/include/llvm --exclude=./usr/include/llvm-c --exclude=./usr/include/dev --exclude='./usr/include/c++' ./usr/include
-							for l in libc.so.103.0 libm.so.10.1 libpthread.so.28.1 libutil.so.21.0; do ln -s $l $out/usr/lib/''${l%%.so*}.so; done
-						'';
+							tar -xzf ${fetch a "comp"} -C $o --exclude=./usr/include/llvm --exclude=./usr/include/llvm-c --exclude=./usr/include/dev --exclude='./usr/include/c++' ./usr/include
+							for l in libc.so.103.0 libm.so.10.1 libpthread.so.28.1 libutil.so.21.0; do ln -s $l $o/usr/lib/''${l%%.so*}.so; done
+						'') sets);
 					};
 
 					# Every target's roc executable, one folder per rocosmo-pack target

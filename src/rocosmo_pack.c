@@ -44,6 +44,7 @@ static void usage(FILE *f) {
 		"  --macos-x86_64 FILE     --macos-arm64 FILE\n"
 		"  --freebsd-x86_64 FILE   --freebsd-aarch64 FILE\n"
 		"  --netbsd-x86_64 FILE    --openbsd-x86_64 FILE\n"
+		"  --openbsd-aarch64 FILE\n"
 		"  --payload PATTERN=FILE  custom `uname -s`-`uname -m` pattern(s), '|'-separated\n"
 		"                          (raw layout only)\n"
 		"  --layout raw|zstd|auto  raw: payloads stored as-is, extracted with dd;\n"

@@ -4,13 +4,12 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Decided 2026-10-17 (BDFN)
 
-- [x] GitHub repo public, after auditing all 43 commits and the tracked files (no host names, home paths, network details or secrets; only git author metadata) (done 2026-10-17 00:15 EDT)
 - [x] Visual Studio 2022 Build Tools (C++ workload, Windows SDK 10.0.26100.0) installed on the Windows test host with winget from PowerShell. basic-cli's x64win still fails to link: Roc's link step names no C runtime library, even with vcvars64 applied (RESEARCH.md §16) (done 2026-10-17 00:33 EDT)
-- [x] Roc compiler as a release: prerelease roc-nightly-2026-10-12-2664a27 with the level-19 Roc container, the rocosmo-pack container, Roc's LICENSE and legal_details, Zstandard's license and SHA256SUMS; ran on Linux, macOS (native, Rosetta 2) and Windows before upload, download verified (done 2026-10-17 00:32 EDT)
-- [x] docs/ZSTD_DECODER_SPEC.md: what a minimum zstd decoder for the runtimes must do, decoding against another data source (raw-content dictionary, RFC 8878 §5), and how a decoder would be accepted. Spec only (done 2026-10-17 00:22 EDT)
 - [x] OpenBSD 7.9 x86_64: target, runtime and rocosmo-pack build against a pinned sysroot from the official sets; P9 installs a VM unattended from the miniroot and every container check passes there, base ksh included (RESEARCH.md §17) (done 2026-10-17 00:46 EDT)
-- [ ] OpenBSD arm64 (needs an arm64 sysroot and an emulated VM install).
-- [ ] Try Roc's x64openbsd target on a platform whose host links libc; map it in Plan.roc if it runs.
+- [x] OpenBSD 7.9 arm64: openbsd-aarch64 target and runtime from a two-CPU sysroot; P9 installs an emulated arm64 VM unattended and every container check passes there (RESEARCH.md §17) (done 2026-10-17 09:50 EDT)
+- [x] Roc's x64openbsd on a libc-linked platform: P2's platform lists OpenBSD's crt objects and libc, the output runs on OpenBSD amd64 from a container, and Plan.roc maps it (done 2026-10-17 09:50 EDT)
+- [x] P2 builds with roc build --no-cache: a warm Roc cache changed x64musl's bytes and broke P4's cross-host identity (RESEARCH.md §17) (done 2026-10-17 09:50 EDT)
+- [ ] Decide whether the rocosmo command should pass --no-cache too, so its output does not depend on the host's Roc cache (costs a full compile per target).
 
 ## Publishing (BDFN, 2026-10-14)
 

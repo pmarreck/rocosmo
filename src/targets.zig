@@ -16,6 +16,7 @@ pub const known = [_]Known{
 	.{ .name = "freebsd-aarch64", .pattern = "FreeBSD-arm64|FreeBSD-aarch64", .arch = .aarch64 },
 	.{ .name = "netbsd-x86_64", .pattern = "NetBSD-amd64|NetBSD-x86_64", .arch = .x86_64 },
 	.{ .name = "openbsd-x86_64", .pattern = "OpenBSD-amd64|OpenBSD-x86_64", .arch = .x86_64 },
+	.{ .name = "openbsd-aarch64", .pattern = "OpenBSD-arm64|OpenBSD-aarch64", .arch = .aarch64 },
 };
 
 pub fn find(name: []const u8) ?Known {
@@ -51,7 +52,9 @@ test "uname strings classify to exactly one target or none" {
 		.{ "FreeBSD-arm64", "freebsd-aarch64" },
 		.{ "NetBSD-amd64", "netbsd-x86_64" },
 		.{ "OpenBSD-amd64", "openbsd-x86_64" },
-		.{ "OpenBSD-arm64", null },
+		.{ "OpenBSD-arm64", "openbsd-aarch64" },
+		.{ "OpenBSD-aarch64", "openbsd-aarch64" },
+		.{ "OpenBSD-riscv64", null },
 		.{ "Linux-armv7l", null },
 		.{ "Linux-riscv64", null },
 		.{ "Darwin-i386", null },

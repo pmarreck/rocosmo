@@ -12,6 +12,7 @@ platform ""
     targets: {
         inputs_dir: "targets/",
         x64musl: { inputs: ["host.o", app], output: Exe },
+        x64openbsd: { inputs: ["crt0.o", "crtbegin.o", "host.o", app, "libc.so", "crtend.o"], output: Exe },
         arm64musl: { inputs: ["host.o", app], output: Exe },
         x64mac: { inputs: ["host.o", app], output: Exe },
         arm64mac: { inputs: ["host.o", app], output: Exe },

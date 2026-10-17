@@ -2,19 +2,14 @@
 # root on the serial console and run guest.sh from the bundle disk (sd1, a raw
 # tar). There is no network. Markers are typed split ("ROCOSMO""-BEGIN") so
 # the echoed command line never matches the printed marker.
-# Usage: expect openbsd.exp ROOT_QCOW2 BUNDLE_TAR
-set root [lindex $argv 0]
-set bundle [lindex $argv 1]
-set timeout 180
-spawn -noecho qemu-system-x86_64 -enable-kvm -cpu host -m 1024 -smp 2 -nographic -nic none \
+# Usage: expect openbsd.exp ARCH ROOT_QCOW2 BUNDLE_TAR TIMEOUT
+source [file join [file dirname [info script]] openbsd-qemu.tcl]
+set arch [lindex $argv 0]
+set root [lindex $argv 1]
+set bundle [lindex $argv 2]
+set timeout [lindex $argv 3]
+spawn -noecho {*}[qemu_cmd $arch] -nic none \
 	-drive file=$root,if=virtio -drive file=$bundle,if=virtio,format=raw,readonly=on
-proc step {pattern reply} {
-	expect {
-		$pattern { send $reply }
-		timeout { puts "\nopenbsd.exp: timed out waiting for: $pattern"; exit 1 }
-		eof { puts "\nopenbsd.exp: VM exited waiting for: $pattern"; exit 1 }
-	}
-}
 step "login:" "root\r"
 step "Password:" "rocosmo-p9\r"
 step "# " "mkdir -p /tmp/bundle && cd /tmp/bundle && tar -xf /dev/rsd1c; echo ROCOSMO\"\"-BEGIN; sh ./guest.sh; echo ROCOSMO\"\"-END\r"

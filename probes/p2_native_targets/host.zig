@@ -1,6 +1,8 @@
-//! libc-free Roc host for the P2 probe. One source, compiled per target as a
-//! single object: Linux talks to the kernel with raw syscalls, macOS calls only
-//! libSystem (Apple's stable OS interface), and Windows calls only kernel32.
+//! Roc host for the P2 probe, with no C runtime beyond each OS's interface.
+//! One source, compiled per target as a single object: Linux talks to the
+//! kernel with raw syscalls, macOS calls only libSystem (Apple's stable OS
+//! interface), OpenBSD only its libc (the one caller its kernel accepts system
+//! calls from), and Windows only kernel32.
 //! It implements Roc's symbol-ABI runtime functions, the hosted function, an
 //! entry point, decimal argument parsing and output.
 
@@ -13,7 +15,8 @@ const os = builtin.os.tag;
 
 const linux = std.os.linux;
 
-const darwin = struct {
+// macOS's libSystem and OpenBSD's libc; the mmap flag values are the same on both.
+const libc_os = struct {
 	extern "c" fn mmap(addr: ?*anyopaque, len: usize, prot: c_int, flags: c_int, fd: c_int, off: i64) callconv(.c) *anyopaque;
 	extern "c" fn write(fd: c_int, buf: [*]const u8, n: usize) callconv(.c) isize;
 	extern "c" fn exit(code: c_int) callconv(.c) noreturn;
@@ -41,8 +44,8 @@ fn osPages(len: usize) ?[*]u8 {
 			if (@as(isize, @bitCast(r)) < 0) return null;
 			return @ptrFromInt(r);
 		},
-		.macos => {
-			const p = darwin.mmap(null, len, darwin.PROT_RW, darwin.MAP_PRIVATE_ANON, -1, 0);
+		.macos, .openbsd => {
+			const p = libc_os.mmap(null, len, libc_os.PROT_RW, libc_os.MAP_PRIVATE_ANON, -1, 0);
 			if (@intFromPtr(p) == std.math.maxInt(usize)) return null;
 			return @ptrCast(p);
 		},
@@ -54,7 +57,7 @@ fn osPages(len: usize) ?[*]u8 {
 fn osWrite(fd: u8, bytes: []const u8) void {
 	switch (os) {
 		.linux => _ = linux.write(fd, bytes.ptr, bytes.len),
-		.macos => _ = darwin.write(fd, bytes.ptr, bytes.len),
+		.macos, .openbsd => _ = libc_os.write(fd, bytes.ptr, bytes.len),
 		.windows => {
 			const h = win.GetStdHandle(if (fd == 2) win.STD_ERROR else win.STD_OUTPUT);
 			var n: u32 = 0;
@@ -67,7 +70,7 @@ fn osWrite(fd: u8, bytes: []const u8) void {
 fn osExit(code: u8) noreturn {
 	switch (os) {
 		.linux => linux.exit_group(code),
-		.macos => darwin.exit(code),
+		.macos, .openbsd => libc_os.exit(code),
 		.windows => win.ExitProcess(code),
 		else => @compileError("unsupported OS"),
 	}
@@ -206,7 +209,7 @@ fn cstrSlice(p: [*:0]const u8) []const u8 {
 
 // ---------------------------------------------------------------------------
 // Entry points. Linux has no C runtime, so _start reads argc/argv from the
-// initial stack. macOS's dyld calls main. Windows' console subsystem calls
+// initial stack. macOS's dyld and OpenBSD's crt0 call main. Windows' console subsystem calls
 // mainCRTStartup with no arguments; we take the last command-line token.
 
 fn linuxMain(sp: [*]usize) callconv(.c) noreturn {
@@ -237,7 +240,7 @@ fn linuxStart() callconv(.naked) noreturn {
 	}
 }
 
-fn darwinMain(argc: c_int, argv: [*][*:0]const u8) callconv(.c) c_int {
+fn libcMain(argc: c_int, argv: [*][*:0]const u8) callconv(.c) c_int {
 	run(if (argc > 1) cstrSlice(argv[1]) else null);
 }
 
@@ -255,7 +258,7 @@ fn windowsStart() callconv(.c) noreturn {
 comptime {
 	switch (os) {
 		.linux => @export(&linuxStart, .{ .name = "_start" }),
-		.macos => @export(&darwinMain, .{ .name = "main" }),
+		.macos, .openbsd => @export(&libcMain, .{ .name = "main" }),
 		.windows => @export(&windowsStart, .{ .name = "mainCRTStartup" }),
 		else => {},
 	}
@@ -288,8 +291,8 @@ fn memcmpImpl(a: [*]const u8, b: [*]const u8, n: usize) callconv(.c) c_int {
 }
 
 comptime {
-	// macOS gets these from libSystem; elsewhere the host must define them.
-	if (os != .macos) {
+	// macOS and OpenBSD get these from their libc; elsewhere the host must define them.
+	if (os != .macos and os != .openbsd) {
 		@export(&memcpyImpl, .{ .name = "memcpy", .linkage = .weak });
 		@export(&memmoveImpl, .{ .name = "memmove", .linkage = .weak });
 		@export(&memsetImpl, .{ .name = "memset", .linkage = .weak });

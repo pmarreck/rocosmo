@@ -3,6 +3,5 @@ inbox/
 result
 result-*
 local/
-.dirtree-state
 zig-out/
 .zig-cache/

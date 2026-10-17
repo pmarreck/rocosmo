@@ -141,11 +141,12 @@ Plan :: [].{
 }
 
 ## rocosmo-pack's slot order; the flag for each is `--<slot>`.
-slot_order = ["windows-x86_64", "linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64", "freebsd-x86_64", "freebsd-aarch64", "netbsd-x86_64"]
+slot_order = ["windows-x86_64", "linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64", "freebsd-x86_64", "freebsd-aarch64", "netbsd-x86_64", "openbsd-x86_64", "openbsd-aarch64"]
 
 ## Roc target -> slot. Static musl beats dynamic glibc (runs on any distro);
-## MSVC beats MinGW. Targets without a slot (arm64win, x64openbsd, arm32, wasm)
-## are skipped until rocosmo has a runtime for them.
+## MSVC beats MinGW. Targets without a slot (arm64win, arm32, wasm) are skipped
+## until rocosmo has a runtime for them. x64openbsd needs a platform whose host
+## links OpenBSD's libc, as OpenBSD accepts system calls only from libc.
 slot_table = [
 	{ target: "x64musl", slot: "linux-x86_64", rank: 3 },
 	{ target: "x64glibc", slot: "linux-x86_64", rank: 1 },
@@ -159,6 +160,7 @@ slot_table = [
 	{ target: "x64mingw", slot: "windows-x86_64", rank: 2 },
 	{ target: "x64freebsd", slot: "freebsd-x86_64", rank: 3 },
 	{ target: "x64netbsd", slot: "netbsd-x86_64", rank: 3 },
+	{ target: "x64openbsd", slot: "openbsd-x86_64", rank: 3 },
 ]
 
 ## One argument at a time; `rest` is true after `--`.
@@ -289,12 +291,13 @@ expect Plan.slot_for("x64glibc") == Ok({ slot: "linux-x86_64", rank: 1 })
 expect Plan.slot_for("arm64mac") == Ok({ slot: "macos-arm64", rank: 3 })
 expect Plan.slot_for("x64win") == Ok({ slot: "windows-x86_64", rank: 3 })
 expect Plan.slot_for("x64netbsd") == Ok({ slot: "netbsd-x86_64", rank: 3 })
+expect Plan.slot_for("x64openbsd") == Ok({ slot: "openbsd-x86_64", rank: 3 })
 expect Plan.slot_for("arm64win") == Err(NoSlot)
 expect Plan.slot_for("wasm32") == Err(NoSlot)
 
 # Every Roc target name from `roc build --help`, classified as a set.
 all_roc_targets = ["x64musl", "arm64musl", "arm32musl", "x64glibc", "x64linux", "arm64linux", "arm64glibc", "arm32linux", "x64mac", "arm64mac", "x64win", "arm64win", "x64mingw", "arm64mingw", "x64freebsd", "x64openbsd", "x64netbsd", "x64elf", "wasm32"]
-expect all_roc_targets.keep_if(|t| Plan.slot_for(t).is_ok()) == ["x64musl", "arm64musl", "x64glibc", "x64linux", "arm64linux", "arm64glibc", "x64mac", "arm64mac", "x64win", "x64mingw", "x64freebsd", "x64netbsd"]
+expect all_roc_targets.keep_if(|t| Plan.slot_for(t).is_ok()) == ["x64musl", "arm64musl", "x64glibc", "x64linux", "arm64linux", "arm64glibc", "x64mac", "arm64mac", "x64win", "x64mingw", "x64freebsd", "x64openbsd", "x64netbsd"]
 
 expect Plan.choose(["x64glibc", "arm64mac", "x64musl", "wasm32", "x64win"]) == {
 	builds: [{ target: "x64win", slot: "windows-x86_64" }, { target: "x64musl", slot: "linux-x86_64" }, { target: "arm64mac", slot: "macos-arm64" }],

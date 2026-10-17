@@ -25,6 +25,7 @@ targets=(
 	"freebsd-aarch64 aarch64-freebsd"
 	"netbsd-x86_64 x86_64-netbsd"
 	"openbsd-x86_64 x86_64-openbsd"
+	"openbsd-aarch64 aarch64-openbsd"
 )
 args=()
 cd "$root" || exit 1

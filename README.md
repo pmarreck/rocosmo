@@ -35,7 +35,7 @@ Projects with no Windows build get a plain `#!/bin/sh` file with the same dispat
 | Windows | arm64 | not tested; Windows 11 on Arm runs the x86_64 image under its x64 emulation |
 | FreeBSD 15.1 | x86_64, aarch64 | virtual machines (KVM; emulated for aarch64) |
 | NetBSD 11.0 | x86_64 | KVM virtual machine |
-| OpenBSD 7.9 | x86_64 | KVM virtual machine, installed unattended from the official miniroot |
+| OpenBSD 7.9 | x86_64, aarch64 | virtual machines (KVM; emulated for aarch64), installed unattended from the official miniroots |
 
 [RESEARCH.md](RESEARCH.md) has the evidence, the commands and the known limits.
 
@@ -53,7 +53,7 @@ This works on Linux and macOS hosts; a container packed on a Mac is byte-identic
 
 ### `rocosmo`: from a Roc app to one file
 
-`rocosmo app.roc` reads the targets the app's platform declares, runs `roc build` once for each, and joins the executables with `rocosmo-pack`. If the platform declares a Windows target the result is the universal file; otherwise it is the `#!/bin/sh` one. When two declared targets fill the same slot, static Linux (musl) is preferred over glibc and Microsoft's toolchain over MinGW. Targets rocosmo cannot pack yet (Windows on Arm, OpenBSD, 32-bit ARM, WebAssembly) are reported and skipped. `rocosmo-pack` itself takes OpenBSD executables; Roc's own OpenBSD output is untested.
+`rocosmo app.roc` reads the targets the app's platform declares, runs `roc build` once for each, and joins the executables with `rocosmo-pack`. If the platform declares a Windows target the result is the universal file; otherwise it is the `#!/bin/sh` one. When two declared targets fill the same slot, static Linux (musl) is preferred over glibc and Microsoft's toolchain over MinGW. Targets rocosmo cannot pack yet (Windows on Arm, 32-bit ARM, WebAssembly) are reported and skipped. Roc's `x64openbsd` target needs a platform whose host links OpenBSD's libc, because OpenBSD accepts system calls only from libc; the test platform in `probes/p2_native_targets` does, and its output runs on OpenBSD 7.9. Roc has no arm64 OpenBSD target.
 
 ```text
 rocosmo [-o OUT] [--app-id ID] [--layout raw|zstd|auto] [-v] APP.roc
@@ -68,12 +68,12 @@ rocosmo-pack -v \
 	--windows-x86_64 app.exe \
 	--linux-x86_64 app-x64musl --linux-aarch64 app-arm64musl \
 	--macos-x86_64 app-x64mac --macos-arm64 app-arm64mac \
-	-o app                       # also: --freebsd-x86_64 --freebsd-aarch64 --netbsd-x86_64 --openbsd-x86_64
+	-o app                       # also: --freebsd-x86_64 --freebsd-aarch64 --netbsd-x86_64 --openbsd-x86_64 --openbsd-aarch64
 ```
 
 To get inputs to try it with, `probes/p2_native_targets/build OUTDIR` builds a small Roc test app for every target.
 
-`scripts/build-pack-container OUT` packs `rocosmo-pack` itself into one 1.5 MB file for all nine targets, so it runs without Nix or Zig on every system in the table above. The tests run it on Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD, and on Linux, macOS and Windows its containers are byte-identical to the ones the native build writes.
+`scripts/build-pack-container OUT` packs `rocosmo-pack` itself into one 1.6 MB file for all ten targets, so it runs without Nix or Zig on every system in the table above. The tests run it on Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD, and on Linux, macOS and Windows its containers are byte-identical to the ones the native build writes.
 
 ### The Roc compiler in one file
 
@@ -110,7 +110,7 @@ A working prototype with no releases yet. The format, the packer, the runtimes a
 
 ## Tests
 
-`./test` runs everything: unit tests, the probes, the CLI suites, and the real-hardware and virtual-machine checks. The BSD checks boot FreeBSD and NetBSD release images under QEMU. The first run downloads about 1.8 GB of compressed images, checks them against the published checksums and keeps only the decompressed images (6.6 GB apparent size) in `~/.cache/rocosmo-vm`. OpenBSD publishes no ready-to-boot image, so the first run also installs OpenBSD 7.9 from its 5.8 MB miniroot. The installer downloads about 670 MB of kernels and sets from the OpenBSD CDN and verifies them; the installed disk uses 1.4 GB in the same folder. Delete that folder to reclaim the space. Building also fetches OpenBSD's `base79.tgz` and `comp79.tgz` once through Nix (about 625 MB, pinned by SHA-256) and keeps only the headers and libraries the OpenBSD runtime links against. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
+`./test` runs everything: unit tests, the probes, the CLI suites, and the real-hardware and virtual-machine checks. The BSD checks boot FreeBSD and NetBSD release images under QEMU. The first run downloads about 1.8 GB of compressed images, checks them against the published checksums and keeps only the decompressed images (6.6 GB apparent size) in `~/.cache/rocosmo-vm`. OpenBSD publishes no ready-to-boot image, so the first run also installs OpenBSD 7.9 for each CPU from its miniroot (5.8 MB for amd64, 45 MB for arm64). The installer downloads kernels and sets from the OpenBSD CDN (about 700 MB for amd64, 525 MB for arm64) and verifies them; the installed disks use 1.4 GB and 1.0 GB in the same folder. The arm64 install runs emulated and took about 11 minutes here. Delete that folder to reclaim the space. Building also fetches OpenBSD's `base79.tgz` and `comp79.tgz` for both CPUs once through Nix (pinned by SHA-256) and keeps only the headers and libraries the OpenBSD runtimes link against. Real-hardware checks read SSH host aliases from an untracked `local/hosts.env`:
 
 ```sh
 ROCOSMO_MACOS_ARM64_HOST=...

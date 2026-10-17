@@ -48,6 +48,6 @@ assert_eq "POSIX-only container runs here" "121" "$out"
 
 # Nothing packable: a clear failure, no output.
 cp -r -- "$p2src" "$cmd/none"
-sed -i -e '/x64musl: {/d' -e '/arm64musl: {/d' -e '/mac: {/d' -e '/x64win: {/d' "$cmd/none/platform/main.roc"
+sed -i -e '/x64musl: {/d' -e '/arm64musl: {/d' -e '/mac: {/d' -e '/x64win: {/d' -e '/x64openbsd: {/d' "$cmd/none/platform/main.roc"
 run_capture "$rocosmo" -o "$cmd/none/out" "$cmd/none/app.roc"
 case "$rc:$err" in "1:rocosmo: the platform declares no target rocosmo can pack (arm64win)"*) pass "no packable target fails clearly";; *) fail "no packable target fails clearly" "rc=$rc $err";; esac
