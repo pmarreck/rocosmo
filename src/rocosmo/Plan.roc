@@ -73,9 +73,9 @@ Plan :: [].{
 
 	## Command-line options. Later switches override earlier ones; everything
 	## after `--` is positional. Empty strings mean "not given".
-	parse_args : List(Str) -> Try({ source : Str, output : Str, app_id : Str, layout : Str, verbose : Bool, no_cache : Bool }, [ShowHelp, ShowAbout, Usage(Str)])
+	parse_args : List(Str) -> Try({ source : Str, output : Str, app_id : Str, layout : Str, verbose : Bool, no_cache : Bool, windows_launcher : Bool }, [ShowHelp, ShowAbout, Usage(Str)])
 	parse_args = |args| {
-		parsed = parse_from(args, { source: "", output: "", app_id: "", layout: "", verbose: Bool.False, no_cache: Bool.False }, Bool.False)?
+		parsed = parse_from(args, { source: "", output: "", app_id: "", layout: "", verbose: Bool.False, no_cache: Bool.False, windows_launcher: Bool.False }, Bool.False)?
 		if parsed.source == "" {
 			Err(Usage("missing APP.roc"))
 		} else if !(parsed.layout == "" or parsed.layout == "raw" or parsed.layout == "zstd" or parsed.layout == "auto") {
@@ -134,13 +134,16 @@ Plan :: [].{
 	}
 
 	## rocosmo-pack arguments for the chosen builds.
-	pack_args : List({ target : Str, slot : Str }), Str, { output : Str, app_id : Str, layout : Str, verbose : Bool } -> List(Str)
+	pack_args : List({ target : Str, slot : Str }), Str, { output : Str, app_id : Str, layout : Str, verbose : Bool, windows_launcher : Bool } -> List(Str)
 	pack_args = |bs, dir, opts| {
 		inputs = bs.fold([], |acc, b| acc.concat(["--${b.slot}", exe_path(dir, b.target)]))
 		id = if opts.app_id == "" [] else ["--app-id", opts.app_id]
 		layout = if opts.layout == "" [] else ["--layout", opts.layout]
 		verbose = if opts.verbose ["-v"] else []
-		inputs.concat(id).concat(layout).concat(verbose).concat(["-o", opts.output])
+		# --windows-launcher only applies when a Windows target is in the build set.
+		has_win = bs.any(|b| b.slot == "windows-x86_64")
+		wl = if opts.windows_launcher and has_win ["--windows-launcher"] else []
+		inputs.concat(id).concat(layout).concat(verbose).concat(wl).concat(["-o", opts.output])
 	}
 }
 
@@ -184,6 +187,8 @@ parse_from = |args, o, rest| {
 				parse_from(tail, { ..o, verbose: Bool.True }, rest)
 			} else if a == "--no-cache" or a == "--cache" {
 				parse_from(tail, { ..o, no_cache: a == "--no-cache" }, rest)
+			} else if a == "--windows-launcher" {
+				parse_from(tail, { ..o, windows_launcher: Bool.True }, rest)
 			} else if a == "-o" or a == "/o" or a == "--output" or a == "--app-id" or a == "--layout" {
 				match tail {
 					[v, .. as more] => parse_from(more, set_opt(o, a, v), rest)
@@ -315,7 +320,7 @@ expect Plan.format(Plan.choose(["x64musl", "x64win"]).builds) == Universal
 expect Plan.format(Plan.choose(["x64musl", "arm64mac", "x64mingw"]).builds) == Universal
 expect Plan.format(Plan.choose(["x64musl", "arm64mac", "arm64win"]).builds) == PosixOnly
 
-defaults = { source: "", output: "", app_id: "", layout: "", verbose: Bool.False, no_cache: Bool.False }
+defaults = { source: "", output: "", app_id: "", layout: "", verbose: Bool.False, no_cache: Bool.False, windows_launcher: Bool.False }
 expect Plan.parse_args(["app.roc"]) == Ok({ ..defaults, source: "app.roc" })
 expect Plan.parse_args(["-o", "a", "my app.roc", "--output", "b c", "--layout=zstd", "--app-id", "org.x.y", "-v"]) == Ok({ ..defaults, source: "my app.roc", output: "b c", app_id: "org.x.y", layout: "zstd", verbose: Bool.True })
 expect Plan.parse_args(["--output=out", "--", "-weird.roc"]) == Ok({ ..defaults, source: "-weird.roc", output: "out" })
@@ -347,9 +352,12 @@ expect Plan.exe_path("b", "x64musl") == "b/app-x64musl"
 expect Plan.exe_path("b", "x64win") == "b/app-x64win.exe"
 expect Plan.exe_path("b", "x64mingw") == "b/app-x64mingw.exe"
 expect Plan.parse_args(["a.roc", "--no-cache"]) == Ok({ ..defaults, source: "a.roc", no_cache: Bool.True })
+expect Plan.parse_args(["--windows-launcher", "a.roc"]) == Ok({ ..defaults, source: "a.roc", windows_launcher: Bool.True })
 expect Plan.parse_args(["--no-cache", "a.roc", "--cache"]) == Ok({ ..defaults, source: "a.roc" })
 expect Plan.roc_build_args("my app.roc", "b", "x64win", Bool.False) == ["build", "--target=x64win", "--output=b/app-x64win.exe", "my app.roc"]
 expect Plan.roc_build_args("a.roc", "b", "x64musl", Bool.True) == ["build", "--no-cache", "--target=x64musl", "--output=b/app-x64musl", "a.roc"]
 
-expect Plan.pack_args([{ target: "x64win", slot: "windows-x86_64" }, { target: "x64musl", slot: "linux-x86_64" }], "b", { output: "out", app_id: "", layout: "", verbose: Bool.False }) == ["--windows-x86_64", "b/app-x64win.exe", "--linux-x86_64", "b/app-x64musl", "-o", "out"]
-expect Plan.pack_args([{ target: "arm64mac", slot: "macos-arm64" }], "b", { output: "o", app_id: "org.a.b", layout: "zstd", verbose: Bool.True }) == ["--macos-arm64", "b/app-arm64mac", "--app-id", "org.a.b", "--layout", "zstd", "-v", "-o", "o"]
+expect Plan.pack_args([{ target: "x64win", slot: "windows-x86_64" }, { target: "x64musl", slot: "linux-x86_64" }], "b", { output: "out", app_id: "", layout: "", verbose: Bool.False, windows_launcher: Bool.False }) == ["--windows-x86_64", "b/app-x64win.exe", "--linux-x86_64", "b/app-x64musl", "-o", "out"]
+expect Plan.pack_args([{ target: "arm64mac", slot: "macos-arm64" }], "b", { output: "o", app_id: "org.a.b", layout: "zstd", verbose: Bool.True, windows_launcher: Bool.False }) == ["--macos-arm64", "b/app-arm64mac", "--app-id", "org.a.b", "--layout", "zstd", "-v", "-o", "o"]
+expect Plan.pack_args([{ target: "x64win", slot: "windows-x86_64" }, { target: "x64musl", slot: "linux-x86_64" }], "b", { output: "out", app_id: "", layout: "", verbose: Bool.False, windows_launcher: Bool.True }) == ["--windows-x86_64", "b/app-x64win.exe", "--linux-x86_64", "b/app-x64musl", "--windows-launcher", "-o", "out"]
+expect Plan.pack_args([{ target: "x64musl", slot: "linux-x86_64" }], "b", { output: "out", app_id: "", layout: "", verbose: Bool.False, windows_launcher: Bool.True }) == ["--linux-x86_64", "b/app-x64musl", "-o", "out"]

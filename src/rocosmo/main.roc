@@ -27,6 +27,8 @@ usage =
 	\\  --no-cache             pass --no-cache to every roc build, so the output
 	\\                         does not depend on what Roc's cache holds
 	\\  --cache                use Roc's cache (the default)
+	\\  --windows-launcher     store the Windows build compressed behind a small
+	\\                         launcher instead of uncompressed (off by default)
 	\\  -v, --verbose          let rocosmo-pack report layout and size
 	\\  -h, --help             show this help
 	\\      --about            one-line description
@@ -130,5 +132,5 @@ build_and_pack! = |roc, packer, opts, builds, dir, output| {
 		Stderr.line!("rocosmo: building ${b.target} -> ${b.slot}") ?? {}
 		run_tool!(roc, Plan.roc_build_args(opts.source, dir, b.target, opts.no_cache))?
 	}
-	run_tool!(packer, Plan.pack_args(builds, dir, { output, app_id: opts.app_id, layout: opts.layout, verbose: opts.verbose }))
+	run_tool!(packer, Plan.pack_args(builds, dir, { output, app_id: opts.app_id, layout: opts.layout, verbose: opts.verbose, windows_launcher: opts.windows_launcher }))
 }

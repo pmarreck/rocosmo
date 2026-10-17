@@ -56,7 +56,7 @@ This works on Linux and macOS hosts; a container packed on a Mac is byte-identic
 `rocosmo app.roc` reads the targets the app's platform declares, runs `roc build` once for each, and joins the executables with `rocosmo-pack`. If the platform declares a Windows target the result is the universal file; otherwise it is the `#!/bin/sh` one. When two declared targets fill the same slot, static Linux (musl) is preferred over glibc and Microsoft's toolchain over MinGW. Targets rocosmo cannot pack yet (Windows on Arm, 32-bit ARM, WebAssembly) are reported and skipped. Roc's `x64openbsd` target needs a platform whose host links OpenBSD's libc, because OpenBSD accepts system calls only from libc; the test platform in `probes/p2_native_targets` does, and its output runs on OpenBSD 7.9. Roc has no arm64 OpenBSD target.
 
 ```text
-rocosmo [-o OUT] [--app-id ID] [--layout raw|zstd|auto] [--no-cache] [-v] APP.roc
+rocosmo [-o OUT] [--app-id ID] [--layout raw|zstd|auto] [--no-cache] [--windows-launcher] [-v] APP.roc
 ```
 
 `ROC` and `ROCOSMO_PACK` choose the `roc` and `rocosmo-pack` executables. The platform has to cross-build its own targets, and if one fails `rocosmo` stops with Roc's error. basic-cli 0.25.0, for example, builds its Linux targets anywhere and its macOS targets only on a Mac, and its Windows target does not link from Linux or macOS yet.
@@ -84,7 +84,13 @@ scripts/build-roc-container roc        # fetches the pinned nightlies and packs 
 ./roc version                          # or roc.exe version on Windows
 ```
 
-The result holds the pinned Roc nightly for Linux x86_64 and aarch64, macOS x86_64 and arm64, and Windows x86_64: every system the nightlies are published for. The test suite runs it natively on Linux, macOS arm64 (and under Rosetta 2) and Windows x86_64, and on each it builds an app that runs there. It is large, 400 MB at the default `--level 19` (437 MB at `--level 3`), mostly because Windows needs its 252 MB executable stored uncompressed. If you pass the file on, include Roc's `LICENSE` and `legal_details` from the nightly with it.
+The result holds the pinned Roc nightly for Linux x86_64 and aarch64, macOS x86_64 and arm64, and Windows x86_64: every system the nightlies are published for. The test suite runs it natively on Linux, macOS arm64 (and under Rosetta 2) and Windows x86_64, and on each it builds an app that runs there. It is large, 400 MB at the default `--level 19` (437 MB at `--level 3`), mostly because Windows loads its 252 MB executable in place, so it is stored uncompressed at the front. The opt-in `--windows-launcher` layout avoids that (see below). If you pass the file on, include Roc's `LICENSE` and `legal_details` from the nightly with it.
+
+### The Windows launcher (optional)
+
+The universal format starts with the app's real Windows executable, stored uncompressed, because Windows maps the file in place. For a large program that is most of the file. `--windows-launcher` (on `rocosmo` and `rocosmo-pack`, off by default) stores a small launcher at the front instead and keeps the real executable as a compressed entry. On first run the launcher rebuilds that executable into `%LOCALAPPDATA%\rocosmo\<app id>\<hash>.exe` and starts it, forwarding the command line, standard handles and exit code. The launcher is a 64 KB program that imports only `KERNEL32.DLL`.
+
+It is opt-in because it changes two things. The app then runs as a child process of the launcher, so process trees and `GetModuleFileName` see the cached copy, and the first run spends about a second rebuilding a large executable. Writing an executable to the user profile and starting it is also the shape some antivirus heuristics score as a "dropper"; on the Windows test host, Microsoft Defender (real-time protection on, current signatures) does not flag the launcher, the container or the rebuilt executable (`tests/cli/windows_launcher.bash`). Prefer the default in-place format unless the Windows image is large enough that the saving matters.
 
 ### Building without Nix
 

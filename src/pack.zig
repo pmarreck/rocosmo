@@ -55,6 +55,22 @@ const num_width = 10;
 /// Index entry name of the Windows PE body, a free delta reference.
 pub const pe_body_name = "windows-x86_64-body";
 
+/// Descriptor the `--windows-launcher` front PE carries, located by its magic
+/// and filled in by `patchDescriptor` once the final layout is known. One
+/// definition (launcher_desc.zig) is shared with the launcher that reads it.
+const desc = @import("launcher_desc.zig");
+pub const launcher_magic = desc.magic;
+pub const desc_name_max = desc.name_max;
+pub const desc_id_max = desc.id_max;
+pub const Desc = struct {
+	const off_index_offset = desc.off_index_offset;
+	const off_index_len = desc.off_index_len;
+	const off_target = desc.off_target;
+	const off_hash = desc.off_hash;
+	const off_app_id = desc.off_app_id;
+	pub const size = desc.size;
+};
+
 /// Line 1 of the file, inside the DOS header bytes the Windows loader ignores
 /// (only "MZ" at 0 and e_lfanew at 0x3c matter). It reads the script region
 /// [0x40, e_lfanew) with dd and evals it, so a shell never parses line 2, which
@@ -373,8 +389,28 @@ pub fn pack(gpa: std.mem.Allocator, pe: ?[]const u8, payloads: []const Payload, 
 /// shell copies with dd, are 4 KiB aligned. `pe` null selects the POSIX-only
 /// format: no PE, and index entry 0 (the PE body) is empty and never referenced.
 pub fn packZstd(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target, level: i32, id: []const u8) PackError![]u8 {
+	return packZstdImpl(gpa, pe, targets, level, id, null);
+}
+
+/// `--windows-launcher` variant: the front PE is a small launcher (not the
+/// app), so the app's own Windows executable is stored as an ordinary
+/// compressed target entry named `win_name` and rebuilt on first run. The
+/// launcher's body is never offered as a delta reference, and its embedded
+/// descriptor is patched with the index location and that entry's name, cache
+/// hash and app id. `win_name` must name one of `targets`.
+pub fn packZstdLauncher(gpa: std.mem.Allocator, launcher: []const u8, targets: []const Target, level: i32, id: []const u8, win_name: []const u8) PackError![]u8 {
+	var found = false;
+	for (targets) |t| if (std.mem.eql(u8, t.name, win_name)) {
+		found = true;
+	};
+	if (!found) return error.InvalidName;
+	return packZstdImpl(gpa, launcher, targets, level, id, win_name);
+}
+
+fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target, level: i32, id: []const u8, win_name: ?[]const u8) PackError![]u8 {
 	const info: ?PeInfo = if (pe) |p| try parsePe(p) else null;
 	const format: Format = if (pe == null) .posix else .universal;
+	const is_launcher = win_name != null;
 	if (!app_id.valid(id)) return error.InvalidAppId;
 	for (targets) |t| {
 		if (!validPattern(t.pattern)) return error.InvalidPattern;
@@ -382,7 +418,9 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 	}
 	const n = targets.len;
 	if (n > layout.max_targets) return error.TooManyTargets;
-	const body: []const u8 = if (pe) |p| p[info.?.soh..] else &.{};
+	// The launcher front is not the app, so its body is never a delta reference.
+	const body: []const u8 = if (pe != null and !is_launcher) pe.?[info.?.soh..] else &.{};
+	const pe_ref_usable = pe != null and !is_launcher;
 
 	// Candidate frames: whole[t], and delta[r * n + t] with r == n meaning the PE body.
 	const whole = try gpa.alloc([]u8, n);
@@ -402,7 +440,7 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 		whole_done += 1;
 		for (0..n + 1) |r| {
 			const ref: []const u8 = if (r == n) body else targets[r].bytes;
-			const usable = if (r == n) pe != null and t.arch == .x86_64 else (r != ti and targets[r].arch == t.arch);
+			const usable = if (r == n) pe_ref_usable and t.arch == .x86_64 else (r != ti and targets[r].arch == t.arch);
 			if (usable) delta[r * n + ti] = zenc.encode(gpa, t.bytes, ref, level) catch |e| return mapEnc(e);
 		}
 	}
@@ -471,7 +509,28 @@ pub fn packZstd(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 	for (targets, rt_offsets) |t, off| @memcpy(out[off..][0..t.runtime_gz.len], t.runtime_gz);
 	@memcpy(out[idx_off..][0..idx_len], idx);
 	for (chosen, frame_offsets) |f, off| @memcpy(out[off..][0..f.len], f);
+	if (win_name) |name| {
+		for (targets) |t| if (std.mem.eql(u8, t.name, name)) {
+			try patchDescriptor(out, idx_off, idx_len, name, &shortHash(t.bytes), id);
+		};
+	}
 	return out;
+}
+
+/// Fill the launcher's descriptor in the finished container: find its magic in
+/// the (verbatim) launcher body and write the index location plus the app
+/// entry's name, cache hash and app id, so the launcher can rebuild it.
+fn patchDescriptor(out: []u8, idx_off: usize, idx_len: usize, name: []const u8, hash: []const u8, id: []const u8) PackError!void {
+	const at = std.mem.indexOf(u8, out, &launcher_magic) orelse return error.UnsupportedPe;
+	if (name.len > desc_name_max or id.len > desc_id_max or hash.len != 16) return error.InvalidName;
+	const d = out[at..][0..Desc.size];
+	std.mem.writeInt(u64, d[Desc.off_index_offset..][0..8], idx_off, .little);
+	std.mem.writeInt(u64, d[Desc.off_index_len..][0..8], idx_len, .little);
+	@memset(d[Desc.off_target..][0..desc_name_max], 0);
+	@memcpy(d[Desc.off_target..][0..name.len], name);
+	@memcpy(d[Desc.off_hash..][0..16], hash);
+	@memset(d[Desc.off_app_id..][0..desc_id_max], 0);
+	@memcpy(d[Desc.off_app_id..][0..id.len], id);
 }
 
 /// Index entry 0 is the PE body (raw, a free reference); entry t+1 is target t.
@@ -1007,6 +1066,81 @@ test "POSIX-only zstd layout rebuilds every target byte-exact and references no 
 		defer gpa.free(got);
 		try testing.expectEqualSlices(u8, t.bytes, got);
 	}
+	const entries = try index.decode(gpa, out[scriptGlobal(out, "x").?..][0..scriptGlobal(out, "y").?], out.len);
+	defer gpa.free(entries);
+	try testing.expectEqual(@as(usize, 0), entries[0].stored_len);
+	for (entries[1..]) |e| try testing.expect(e.ref == null or e.ref.? != 0);
+}
+
+/// A fake launcher PE: the shape of fakePe, with the launcher magic and a
+/// zeroed descriptor at the start of the first section's body, where the
+/// packer will find and patch it (the body is copied verbatim into the output).
+fn fakeLauncherPe(gpa: std.mem.Allocator) ![]u8 {
+	const pe = try fakePe(gpa);
+	const info = try parsePe(pe);
+	@memcpy(pe[info.soh..][0..launcher_magic.len], &launcher_magic);
+	@memset(pe[info.soh + launcher_magic.len ..][0 .. Desc.size - launcher_magic.len], 0);
+	return pe;
+}
+
+fn descField(out: []const u8, comptime off: usize, len: usize) []const u8 {
+	const at = std.mem.indexOf(u8, out, &launcher_magic).?;
+	return std.mem.sliceTo(out[at + off ..][0..len], 0);
+}
+
+test "windows launcher: app PE stored compressed, launcher at the front, descriptor patched" {
+	const gpa = testing.allocator;
+	const launcher = try fakeLauncherPe(gpa);
+	defer gpa.free(launcher);
+	const app = try fakePe(gpa); // the app's real Windows executable
+	defer gpa.free(app);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = [_]Target{
+		.{ .name = "windows-x86_64", .pattern = "Windows-x86_64", .arch = .x86_64, .bytes = app, .runtime_gz = "" },
+		.{ .name = "linux-x86_64", .pattern = "Linux-x86_64", .arch = .x86_64, .bytes = z.x64, .runtime_gz = "rt1" },
+		.{ .name = "linux-aarch64", .pattern = "Linux-aarch64", .arch = .aarch64, .bytes = z.arm, .runtime_gz = "rt2" },
+	};
+	const out = try packZstdLauncher(gpa, launcher, &ts, 19, test_id, "windows-x86_64");
+	defer gpa.free(out);
+
+	// The front is a universal polyglot built from the launcher, not the app.
+	try expectTrampoline(out);
+	try testing.expect(std.mem.startsWith(u8, out, "MZ"));
+
+	// The app's Windows executable rebuilds byte-for-byte from the container.
+	const got = try rebuild(gpa, out, "windows-x86_64");
+	defer gpa.free(got);
+	try testing.expectEqualSlices(u8, app, got);
+
+	// It is stored compressed (a frame or delta), never raw at the front.
+	const entries = try index.decode(gpa, out[scriptGlobal(out, "x").?..][0..scriptGlobal(out, "y").?], out.len);
+	defer gpa.free(entries);
+	for (entries) |e| if (std.mem.eql(u8, e.name, "windows-x86_64")) {
+		try testing.expect(e.kind != .raw);
+		try testing.expect(e.stored_len < app.len);
+	};
+
+	// The descriptor names the index location, the entry, its hash and the app id.
+	const at = std.mem.indexOf(u8, out, &launcher_magic).?;
+	try testing.expectEqual(scriptGlobal(out, "x").?, std.mem.readInt(u64, out[at + Desc.off_index_offset ..][0..8], .little));
+	try testing.expectEqual(scriptGlobal(out, "y").?, std.mem.readInt(u64, out[at + Desc.off_index_len ..][0..8], .little));
+	try testing.expectEqualStrings("windows-x86_64", descField(out, Desc.off_target, desc_name_max));
+	try testing.expectEqualStrings(&shortHash(app), out[at + Desc.off_hash ..][0..16]);
+	try testing.expectEqualStrings(test_id, descField(out, Desc.off_app_id, desc_id_max));
+}
+
+test "windows launcher: win_name must name a target, and the launcher body is never a delta reference" {
+	const gpa = testing.allocator;
+	const launcher = try fakeLauncherPe(gpa);
+	defer gpa.free(launcher);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	try testing.expectError(error.InvalidName, packZstdLauncher(gpa, launcher, &ts, 3, test_id, "windows-x86_64"));
+	// No entry references entry 0 (the launcher body), which stores nothing.
+	const out = try packZstdLauncher(gpa, launcher, &ts, 3, test_id, "linux-x86_64");
+	defer gpa.free(out);
 	const entries = try index.decode(gpa, out[scriptGlobal(out, "x").?..][0..scriptGlobal(out, "y").?], out.len);
 	defer gpa.free(entries);
 	try testing.expectEqual(@as(usize, 0), entries[0].stored_len);

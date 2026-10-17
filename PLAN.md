@@ -4,7 +4,6 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Decided 2026-10-17 (BDFN)
 
-- [x] OpenBSD 7.9 x86_64: target, runtime and rocosmo-pack build against a pinned sysroot from the official sets; P9 installs a VM unattended from the miniroot and every container check passes there, base ksh included (RESEARCH.md §17) (done 2026-10-17 00:46 EDT)
 - [x] OpenBSD 7.9 arm64: openbsd-aarch64 target and runtime from a two-CPU sysroot; P9 installs an emulated arm64 VM unattended and every container check passes there (RESEARCH.md §17) (done 2026-10-17 09:50 EDT)
 - [x] Roc's x64openbsd on a libc-linked platform: P2's platform lists OpenBSD's crt objects and libc, the output runs on OpenBSD amd64 from a container, and Plan.roc maps it (done 2026-10-17 09:50 EDT)
 - [x] P2 builds with roc build --no-cache: a warm Roc cache changed x64musl's bytes and broke P4's cross-host identity (RESEARCH.md §17) (done 2026-10-17 09:50 EDT)
@@ -18,6 +17,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 - [ ] Attractive README showing the one-command use.
 
 ## Awaiting BDFN
+- [x] Share the `roc` universal container built by rocosmo: already published as a public pre-release (tag roc-nightly-2026-10-12-2664a27) with the 400 MB `roc` asset, rocosmo-pack, the Roc/rocosmo/zstd licenses and SHA256SUMS; matches the current nightly pin (confirmed 2026-10-17).
 
 - [ ] Decide scope for app icons across OSes (asked 2026-10-14).
 - [ ] Decide scope for double-clickable macOS GUI apps (.app bundle in the cache, a wrapper beside the container, or neither) (asked 2026-10-14).
@@ -25,7 +25,11 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Later
 
-- [ ] On hold (BDFN, 2026-10-17): opt-in Windows launcher for large universal containers; proposal and risks in docs/plan_context/windows_launcher.md.
+- [x] Opt-in `--windows-launcher` (x86_64) built and verified (done 2026-10-17 13:50 EDT; design in docs/plan_context/windows_launcher.md, how-it-works in TECHNIQUE.md). Default off.
+  - [x] Packer core: store the app's real PE as a zstd target entry, put a small kernel32-only launcher PE at the front, patch it with the index location and the Windows entry name; round-trip test on Linux that the PE rebuilds byte-exact and the container shrinks.
+  - [x] Launcher PE (src, libc-free Zig, kernel32 only): rebuild the Windows payload into %LOCALAPPDATA%\rocosmo\<app id>\<hash>.exe via the shared rt_ffi decode core, then CreateProcessW, inherit handles, forward the exit code.
+  - [x] rocosmo-pack CLI + rocosmo command: `--windows-launcher` flag, documented in README/TECHNIQUE as off by default with the dropper/AV and child-process caveats.
+  - [x] AV gate: on the Windows host, MpCmdRun.exe on-demand scan of the launcher and the launcher-fronted container, plus an execute-and-cache run for on-access protection; assert no detection.
 - [ ] Noted (BDFN, 2026-10-17): a rocosmo-owned Roc platform (libc-free Zig host per target) so the rocosmo command and similar apps cross-build every target from any host; a separate deliverable under INTENT's boundary.
 
 - [ ] Real platform package: per-OS libc-free Zig host with args, environment, I/O and a size-recording allocator.

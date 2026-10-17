@@ -32,6 +32,13 @@ int rocosmo_target_pattern(const uint8_t *name, size_t name_len, const uint8_t *
  * level is the zstd level, 1-22. Output as for rocosmo_pack. */
 int rocosmo_pack_zstd(const uint8_t *pe, size_t pe_len, const rocosmo_target *targets, size_t count, int level,
 	const uint8_t *app_id, size_t app_id_len, uint8_t **out, size_t *out_len);
+/* Like rocosmo_pack_zstd, but front the container with the embedded Windows
+ * launcher (opt-in): the app's own Windows PE (win_pe) is stored as a
+ * compressed entry the launcher rebuilds and runs on first use, instead of
+ * sitting uncompressed at the front. `targets`/`count` are the other (POSIX)
+ * targets, as for rocosmo_pack_zstd. win_pe must be a PE32+ image. */
+int rocosmo_pack_zstd_launcher(const uint8_t *win_pe, size_t win_pe_len, const rocosmo_target *targets, size_t count, int level,
+	const uint8_t *app_id, size_t app_id_len, uint8_t **out, size_t *out_len);
 
 typedef struct { const uint8_t *ptr; size_t len; } rocosmo_buffer;
 enum { ROCOSMO_APP_ID_OPTION = 0, ROCOSMO_APP_ID_EMBEDDED = 1, ROCOSMO_APP_ID_DEFAULT = 2 };

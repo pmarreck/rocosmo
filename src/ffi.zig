@@ -144,6 +144,49 @@ export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Tar
 	return .ok;
 }
 
+const launcher = @import("launcher");
+
+/// Like rocosmo_pack_zstd, but front the container with the embedded Windows
+/// launcher (`--windows-launcher`): the app's own Windows PE is given
+/// separately (win_pe) and stored as a compressed entry named "windows-x86_64"
+/// that the launcher rebuilds and runs, instead of sitting uncompressed at the
+/// front. `list`/`count` are the other (POSIX) targets, as for rocosmo_pack_zstd.
+export fn rocosmo_pack_zstd_launcher(win_pe: ?[*]const u8, win_pe_len: usize, list: ?[*]const Target, count: usize, level: c_int, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
+	const idp = id orelse return .invalid_argument;
+	const o = out orelse return .invalid_argument;
+	const ol = out_len orelse return .invalid_argument;
+	const wp = win_pe orelse return .invalid_argument;
+	if (win_pe_len == 0) return .invalid_argument;
+	if (count > 0 and list == null) return .invalid_argument;
+	if (level < 1 or level > 22) return .invalid_argument;
+	const win_name = "windows-x86_64";
+	const ts = gpa.alloc(pack.Target, count + 1) catch return .out_of_memory;
+	defer gpa.free(ts);
+	// The Windows app: a compressed x86_64 entry with no POSIX runtime and a
+	// pattern that never matches a POSIX `uname` (the launcher, not the shell
+	// dispatcher, rebuilds it).
+	ts[0] = .{ .name = win_name, .pattern = "Windows-x86_64", .arch = .x86_64, .bytes = wp[0..win_pe_len], .runtime_gz = &.{} };
+	for (ts[1..], 0..) |*t, i| {
+		const src = list.?[i];
+		const k = targets.find(src.name[0..src.name_len]) orelse return .unknown_target;
+		t.* = .{ .name = k.name, .pattern = k.pattern, .arch = k.arch, .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{}, .runtime_gz = runtimeFor(k.name) };
+	}
+	const result = pack.packZstdLauncher(gpa, launcher.bytes, ts, level, idp[0..id_len], win_name) catch |e| return switch (e) {
+		error.InvalidAppId => .invalid_app_id,
+		error.NotPe => .not_pe,
+		error.UnsupportedPe => .unsupported_pe,
+		error.HeadersOverflow => .headers_overflow,
+		error.InvalidPattern => .invalid_pattern,
+		error.OutOfMemory => .out_of_memory,
+		error.InvalidName => .invalid_name,
+		error.TooManyTargets => .too_many_targets,
+		error.EncodeFailed => .encode_failed,
+	};
+	o.* = result.ptr;
+	ol.* = result.len;
+	return .ok;
+}
+
 const app_id = @import("app_id.zig");
 
 pub const Buffer = extern struct { ptr: ?[*]const u8, len: usize };

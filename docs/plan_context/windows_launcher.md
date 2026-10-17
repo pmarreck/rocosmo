@@ -1,6 +1,10 @@
 # Proposal: a Windows launcher for large universal containers
 
-Status: proposed 2026-10-16, awaiting BDFN. Nothing is built.
+Status: proposed 2026-10-16; built 2026-10-17 as the opt-in `--windows-launcher`
+(x86_64). This document is the original design; the implementation follows it,
+with the specifics and test evidence in TECHNIQUE.md ("Windows launcher"),
+RESEARCH.md and `tests/cli/windows_launcher.bash`. The Windows-on-Arm relay
+remains a separate PLAN item.
 
 ## Problem
 

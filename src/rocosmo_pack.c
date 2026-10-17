@@ -50,6 +50,9 @@ static void usage(FILE *f) {
 		"  --layout raw|zstd|auto  raw: payloads stored as-is, extracted with dd;\n"
 		"                          zstd: zstd frames and same-CPU deltas, rebuilt by a\n"
 		"                          small per-OS/CPU runtime; auto (default): the smaller\n"
+		"  --windows-launcher      store the Windows image compressed behind a small\n"
+		"                          launcher instead of uncompressed at the front; off by\n"
+		"                          default (needs --windows-x86_64 and the zstd layout)\n"
 		"  --level N               zstd level, 1-22 (default %d)\n"
 		"  --app-id ID             cache namespace, lowercase reverse-DNS (org.example.tool);\n"
 		"                          default: the id the payloads embed as\n"
@@ -103,7 +106,7 @@ int main(int argc, char **argv) {
 	const char *names[MAX_PAYLOADS], *patterns[MAX_PAYLOADS], *paths[MAX_PAYLOADS];
 	size_t pattern_lens[MAX_PAYLOADS];
 	size_t count = 0;
-	int stdin_uses = 0, custom = 0, verbose = 0, level = DEFAULT_LEVEL;
+	int stdin_uses = 0, custom = 0, verbose = 0, launcher = 0, level = DEFAULT_LEVEL;
 	enum layout layout = LAYOUT_AUTO;
 
 	for (int i = 1; i < argc; i++) {
@@ -111,6 +114,7 @@ int main(int argc, char **argv) {
 		if (!strcmp(a, "-h") || !strcmp(a, "--help") || !strcmp(a, "/?")) { usage(stdout); return 0; }
 		if (!strcmp(a, "--about")) { printf("rocosmo-pack %s: combine native executables into one multi-OS, multi-arch file (%s)\n", ROCOSMO_VERSION, ROCOSMO_PLATFORM); return 0; }
 		if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) { verbose = 1; continue; }
+		if (!strcmp(a, "--windows-launcher")) { launcher = 1; continue; }
 		if (i + 1 >= argc) { fprintf(stderr, "rocosmo-pack: %s needs a value\n", a); return 2; }
 		const char *v = argv[++i];
 		if (!strcmp(a, "-o") || !strcmp(a, "/o") || !strcmp(a, "--output")) { out_path = v; continue; }
@@ -168,6 +172,11 @@ int main(int argc, char **argv) {
 	if (stdin_uses > 1) { fprintf(stderr, "rocosmo-pack: only one input may come from stdin\n"); return 2; }
 	if (custom && layout == LAYOUT_ZSTD) { fprintf(stderr, "rocosmo-pack: --payload needs --layout raw (zstd targets need a known OS/CPU)\n"); return 2; }
 	if (custom) layout = LAYOUT_RAW;
+	if (launcher) {
+		if (!pe_path) { fprintf(stderr, "rocosmo-pack: --windows-launcher needs --windows-x86_64 FILE (the app's Windows executable)\n"); return 2; }
+		if (custom || layout == LAYOUT_RAW) { fprintf(stderr, "rocosmo-pack: --windows-launcher needs the zstd layout (it compresses the Windows image)\n"); return 2; }
+		layout = LAYOUT_ZSTD;
+	}
 
 	uint8_t *pe = NULL;
 	size_t pe_len = 0;
@@ -201,15 +210,24 @@ int main(int argc, char **argv) {
 	uint8_t *raw = NULL, *zst = NULL;
 	size_t raw_len = 0, zst_len = 0;
 	int st;
-	if (layout != LAYOUT_ZSTD && (st = rocosmo_pack(pe, pe_len, payloads, count, id, id_len, &raw, &raw_len))) {
-		fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
-		return 1;
+	if (launcher) {
+		/* The app's Windows PE is given separately (pe) and stored compressed;
+		 * the embedded launcher goes at the front. */
+		if ((st = rocosmo_pack_zstd_launcher(pe, pe_len, targets, count, level, id, id_len, &zst, &zst_len))) {
+			fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
+			return 1;
+		}
+	} else {
+		if (layout != LAYOUT_ZSTD && (st = rocosmo_pack(pe, pe_len, payloads, count, id, id_len, &raw, &raw_len))) {
+			fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
+			return 1;
+		}
+		if (layout != LAYOUT_RAW && (st = rocosmo_pack_zstd(pe, pe_len, targets, count, level, id, id_len, &zst, &zst_len))) {
+			fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
+			return 1;
+		}
 	}
-	if (layout != LAYOUT_RAW && (st = rocosmo_pack_zstd(pe, pe_len, targets, count, level, id, id_len, &zst, &zst_len))) {
-		fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
-		return 1;
-	}
-	int use_zstd = layout == LAYOUT_ZSTD || (layout == LAYOUT_AUTO && zst_len < raw_len);
+	int use_zstd = launcher || layout == LAYOUT_ZSTD || (layout == LAYOUT_AUTO && zst_len < raw_len);
 	const uint8_t *out = use_zstd ? zst : raw;
 	size_t out_len = use_zstd ? zst_len : raw_len;
 	if (write_out(out_path, out, out_len)) { perror(out_path); return 1; }

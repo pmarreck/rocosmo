@@ -42,7 +42,7 @@ pub const Status = enum(c_int) { ok = 0, bad_index = 1, no_such_target = 2, corr
 
 /// Validate the whole index before trusting any offset in it, then report the
 /// byte ranges needed to rebuild `name` (target and, for a delta, its reference).
-export fn rocosmo_rt_plan_target(idx: ?[*]const u8, idx_len: usize, container_len: u64, name: ?[*]const u8, name_len: usize, out: ?*Plan) callconv(.c) Status {
+pub export fn rocosmo_rt_plan_target(idx: ?[*]const u8, idx_len: usize, container_len: u64, name: ?[*]const u8, name_len: usize, out: ?*Plan) callconv(.c) Status {
 	const o = out orelse return .invalid_argument;
 	const ip = idx orelse return .invalid_argument;
 	const np = name orelse return .invalid_argument;
@@ -62,7 +62,7 @@ export fn rocosmo_rt_plan_target(idx: ?[*]const u8, idx_len: usize, container_le
 	return .ok;
 }
 
-export fn rocosmo_rt_decode(frame: ?[*]const u8, frame_len: usize, ref: ?[*]const u8, ref_len: usize, out: ?[*]u8, out_len: usize) callconv(.c) Status {
+pub export fn rocosmo_rt_decode(frame: ?[*]const u8, frame_len: usize, ref: ?[*]const u8, ref_len: usize, out: ?[*]u8, out_len: usize) callconv(.c) Status {
 	const fp = frame orelse return .invalid_argument;
 	const op: [*]u8 = out orelse if (out_len == 0) @constCast(&[_]u8{}) else return .invalid_argument;
 	const r: ?[]const u8 = if (ref) |rp| rp[0..ref_len] else null;
