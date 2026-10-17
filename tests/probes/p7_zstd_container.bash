@@ -48,7 +48,14 @@ cat "$p2_out/app-x64mac" "$p7/other-id" > "$p7/conflict-mac"
 run_capture "$pack_bin" --windows-x86_64 "$p2_out/app-x64win.exe" --linux-x86_64 "$p2_out/app-x64musl" --macos-x86_64 "$p7/conflict-mac" -o "$p7/x"
 case "$rc:$err" in 1:*"conflicting"*) pass "payloads declaring different app ids are refused";; *) fail "conflicting app ids" "rc=$rc $err";; esac
 run_capture "$pack_bin" --help
-case "$out" in *--freebsd-x86_64*--layout*) pass "--help lists BSD targets and --layout";; *) fail "--help content" "$out";; esac
+case "$out" in *--layout*) pass "--help lists --layout";; *) fail "--help content" "$out";; esac
+# Every target in the table (src/targets.zig, the source of the CLI's flags)
+# must be offered in --help.
+missing=""
+for t in $(grep -o '\.name = "[^"]*"' "$ROOT/src/targets.zig" | cut -d'"' -f2); do
+	case "$out" in *"--$t "*) ;; *) missing="$missing $t";; esac
+done
+[ -n "$(grep -o '\.name = "[^"]*"' "$ROOT/src/targets.zig")" ] && [ -z "$missing" ] && pass "--help lists every known target" || fail "--help lists every known target" "missing:$missing"
 
 # --- native Linux x86_64 ---
 app="$p7/app"
@@ -106,8 +113,10 @@ run_capture "$rt" "$app" ${xy% *} ${xy#* } linux-x86_64 "$p7/rt-exists"
 assert_eq "runtime never overwrites an existing OUT" "1:rocosmo-runtime: $p7/rt-exists: File exists" "$rc:$err"
 # Size gate: every runtime, with the small zstd decoder at -Oz, is 9.9-11.3 KB
 # gzipped (RESEARCH.md section 15); the gate leaves under 1 KB of headroom.
+# The targets come from the table in src/targets.zig.
 rt_gate=12000
-for t in linux-x86_64 linux-aarch64 macos-x86_64 macos-arm64 freebsd-x86_64 freebsd-aarch64 netbsd-x86_64; do
+for t in $(grep -o '\.name = "[^"]*"' "$ROOT/src/targets.zig" | cut -d'"' -f2); do
+	[ -s "$rt_dir/$t" ] || { fail "$t runtime is built" "no $rt_dir/$t"; continue; }
 	gz=$(gzip -9 -n -c "$rt_dir/$t" | wc -c)
 	[ "$gz" -le "$rt_gate" ] && pass "$t runtime is at most $rt_gate bytes gzipped ($gz)" || fail "$t runtime gzipped size" "$gz > $rt_gate"
 done

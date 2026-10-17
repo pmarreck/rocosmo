@@ -1,0 +1,44 @@
+# Install OpenBSD from the official miniroot onto ROOT_QCOW2, unattended.
+# SeaBIOS's serial console shows the boot prompt, "set tty com0" moves the
+# kernel console there, and the installer's autoinstall fetches its answers
+# from CONF_URL (run-in-vm serves openbsd-install.conf on the host's loopback,
+# which QEMU's user network shows the guest as 10.0.2.2). Sets come from the
+# OpenBSD CDN; the installer verifies them with signify. The installer then
+# reboots, which would start the miniroot again, so that VM is stopped at the
+# boot prompt and a second one boots the installed disk alone once, so
+# first-boot work (kernel relinking) is done, and halts it.
+# Usage: expect openbsd-install.exp MINIROOT ROOT_QCOW2 CONF_URL
+set miniroot [lindex $argv 0]
+set root [lindex $argv 1]
+set url [lindex $argv 2]
+set sercon [file join [file dirname $root] sercon-port]
+set f [open $sercon wb]; puts -nonewline $f "\xf8\x03"; close $f
+set timeout 300
+spawn -noecho qemu-system-x86_64 -enable-kvm -cpu host -m 1024 -smp 2 -nographic \
+	-fw_cfg name=etc/sercon-port,file=$sercon -nic user,model=virtio-net-pci \
+	-drive file=$root,if=none,id=root -device virtio-blk-pci,drive=root,bootindex=1 \
+	-drive file=$miniroot,if=none,id=mr,format=raw,readonly=on -device virtio-blk-pci,drive=mr,bootindex=0
+proc step {pattern reply} {
+	expect {
+		$pattern { send $reply }
+		timeout { puts "\nopenbsd-install.exp: timed out waiting for: $pattern"; exit 1 }
+		eof { puts "\nopenbsd-install.exp: VM exited waiting for: $pattern"; exit 1 }
+	}
+}
+step "boot>" "set tty com0\r"
+step "boot>" "\r"
+step "(A)utoinstall" "a\r"
+step "Response file location?" "$url\r"
+set timeout 1800
+step "CONGRATULATIONS!" ""
+step "boot>" ""
+exec kill [exp_pid]
+close
+wait
+set timeout 300
+spawn -noecho qemu-system-x86_64 -enable-kvm -cpu host -m 1024 -smp 2 -nographic -nic none \
+	-drive file=$root,if=virtio
+step "login:" "root\r"
+step "Password:" "rocosmo-p9\r"
+step "# " "halt -p\r"
+expect eof

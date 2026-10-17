@@ -47,3 +47,11 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 - [x] [Publishing (BDFN, 2026-10-14)] Zstandard BSD notice: THIRD_PARTY_NOTICES.md plus a license-URL comment in zstd containers, not the full text (done 2026-10-14 17:15 EDT)
 - [x] [Publishing (BDFN, 2026-10-14)] `rocosmo` command in Roc on basic-cli (src/rocosmo): builds the targets the platform declares, then packs; universal with a Windows target, else POSIX-only (done 2026-10-16 00:40 EDT)
 - [x] [Publishing (BDFN, 2026-10-14)] Shrink the per-OS/CPU runtimes: zstd's educational decoder, 23.6-28.4 KB to 14.4-15.3 KB gzipped, P7 gate 16,000 bytes; RESEARCH.md §15 (done 2026-10-16 10:19 EDT)
+
+## Retired 2026-10-17
+
+- [x] [Publishing (BDFN, 2026-10-14)] TECHNIQUE.md: both formats, dispatcher, layouts, memfd, limits; linked from the README, trampoline lines checked against the packer (done 2026-10-16 10:28 EDT)
+- [x] [Publishing (BDFN, 2026-10-14)] Roc compiler as one container: scripts/build-roc-container, five nightlies, 400 MB at level 19; runs and builds apps on Linux, macOS (native, Rosetta 2) and Windows; RESEARCH.md §16 (done 2026-10-16 10:47 EDT)
+- [x] [Publishing (BDFN, 2026-10-14)] rocosmo-pack as one container: scripts/build-pack-container, eight targets, 1.6 MB; runs on Linux, macOS, Windows and in the BSD VMs; packs byte-identically on Linux, macOS and Windows (binary stdio on Windows fixed) (done 2026-10-16 10:58 EDT)
+- [x] [Publishing (BDFN, 2026-10-14)] Runtimes, second pass: compact XXH64, function sections and -Oz, 9.9-11.3 KB gzipped (decode 16% slower), gate 12,000; RESEARCH.md §15 (done 2026-10-16 11:19 EDT)
+- [x] [Publishing (BDFN, 2026-10-14)] Runtime maps container ranges instead of copying them: the Roc linux-x86_64 rebuild now fits a 400 MB cgroup cap (killed before); RESEARCH.md §15 (done 2026-10-16 11:39 EDT)

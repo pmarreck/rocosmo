@@ -1,5 +1,6 @@
-# P9: the BSD runtimes on real kernels. Pinned FreeBSD and NetBSD release
-# images boot under QEMU (KVM for x86_64, emulation for aarch64); one packed
+# P9: the BSD runtimes on real kernels. Pinned FreeBSD, NetBSD and OpenBSD
+# releases boot under QEMU (KVM for x86_64, emulation for aarch64; OpenBSD is
+# installed once from its miniroot, see run-in-vm); one packed
 # container runs inside each, checking payload selection, arguments, exit
 # status, the zstd runtime and the cache. VM disks are throwaway overlays in
 # $SCRATCH; only the verified base images are cached between runs.
@@ -13,11 +14,15 @@ p2_out="${p2_out:-$SCRATCH/p2}"
 [ -f "$p2_out/app-x64win.exe" ] || "$ROOT/probes/p2_native_targets/build" "$p2_out" >/dev/null 2>&1
 
 # One C payload per target, each reporting which target it was built for.
-p9_targets="freebsd-x86_64:x86_64-freebsd netbsd-x86_64:x86_64-netbsd freebsd-aarch64:aarch64-freebsd linux-x86_64:x86_64-linux-musl"
+# Zig ships no OpenBSD libc, so that payload links against the flake's sysroot.
+p9_targets="freebsd-x86_64:x86_64-freebsd netbsd-x86_64:x86_64-netbsd openbsd-x86_64:x86_64-openbsd freebsd-aarch64:aarch64-freebsd linux-x86_64:x86_64-linux-musl"
+o="$ROCOSMO_OPENBSD_SYSROOT"
+printf 'include_dir=%s/usr/include\nsys_include_dir=%s/usr/include\ncrt_dir=%s/usr/lib\nmsvc_lib_dir=\nkernel32_lib_dir=\ngcc_dir=\n' "$o" "$o" "$o" >"$p9/openbsd-libc.txt"
 pack_args=()
 for pair in $p9_targets; do
 	name="${pair%%:*}"
-	run_capture zig cc -target "${pair#*:}" -O2 -DTARGET="\"$name\"" "$vm/hello.c" -o "$p9/hello-$name"
+	libc=""; [ "$name" = openbsd-x86_64 ] && libc="$p9/openbsd-libc.txt"
+	run_capture env ${libc:+"ZIG_LIBC=$libc"} zig cc -target "${pair#*:}" -O2 -DTARGET="\"$name\"" "$vm/hello.c" -o "$p9/hello-$name"
 	assert_rc0 "hello payload cross-compiles for $name"
 	pack_args+=("--$name" "$p9/hello-$name")
 done
@@ -32,7 +37,7 @@ assert_rc0 "build rocosmo-pack as a container for the guests"
 cp "$vm/guest.sh" "$p9/bundle/"
 
 # Boot the guests concurrently; each prints the guest script's output.
-for os in freebsd-x86_64 netbsd-x86_64 freebsd-aarch64; do
+for os in freebsd-x86_64 netbsd-x86_64 openbsd-x86_64 freebsd-aarch64; do
 	"$vm/run-in-vm" "$os" "$p9/bundle" >"$p9/$os.out" 2>"$p9/$os.err" &
 	eval "p9_pid_$(echo "$os" | tr - _)=$!"
 done
@@ -53,6 +58,8 @@ p9_check() { # OS
 	case "$out" in *"== posix-sh"*"hello $os [q]"*"rc=0"*) pass "$os: the base sh runs the POSIX-only container";; *) fail "$os POSIX-only sh run" "$out";; esac
 	case "$out" in *"== pack"*"rocosmo-pack "*"($os)"*"rc=0"*) pass "$os: the rocosmo-pack container runs its $os build";; *) fail "$os rocosmo-pack container" "$out";; esac
 }
-for os in freebsd-x86_64 netbsd-x86_64 freebsd-aarch64; do p9_check "$os"; done
-case "$(cat "$p9/netbsd-x86_64.out")" in *"== ksh"*"hello netbsd-x86_64 [k]"*"rc=0"*) pass "netbsd-x86_64: base ksh runs the container too";; *) fail "netbsd ksh run" "$(cat "$p9/netbsd-x86_64.out")";; esac
-case "$(cat "$p9/netbsd-x86_64.out")" in *"== posix-ksh"*"hello netbsd-x86_64 [r]"*"rc=0"*) pass "netbsd-x86_64: base ksh runs the POSIX-only container";; *) fail "netbsd ksh POSIX-only run" "$(cat "$p9/netbsd-x86_64.out")";; esac
+for os in freebsd-x86_64 netbsd-x86_64 openbsd-x86_64 freebsd-aarch64; do p9_check "$os"; done
+for os in netbsd-x86_64 openbsd-x86_64; do
+	case "$(cat "$p9/$os.out")" in *"== ksh"*"hello $os [k]"*"rc=0"*) pass "$os: base ksh runs the container too";; *) fail "$os ksh run" "$(cat "$p9/$os.out")";; esac
+	case "$(cat "$p9/$os.out")" in *"== posix-ksh"*"hello $os [r]"*"rc=0"*) pass "$os: base ksh runs the POSIX-only container";; *) fail "$os ksh POSIX-only run" "$(cat "$p9/$os.out")";; esac
+done

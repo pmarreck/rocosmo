@@ -665,4 +665,32 @@ Its output matches native `roc`'s, with two properties of Roc that look like dif
 
 With the rocosmo-pack container (`scripts/build-pack-container`, 1.6 MB), a Windows or macOS machine with neither Nix nor Zig is a complete build host for apps whose platform ships prebuilt hosts. On each real host the Roc container built P2 for x64musl, arm64musl, x64mac, arm64mac and x64win (Roc's embedded linker cross-links all of them from Windows too), the rocosmo-pack container packed them, and the container ran on the build host and on Linux (`tests/cli/toolchain_hosts.bash`).
 
-basic-cli 0.25.0's Windows target also fails to link on the Windows host (no Visual Studio installed there): `lld-link` reports undefined `mainCRTStartup` and `memcpy`, the Microsoft C runtime. On the Mac, the same basic-cli app builds for arm64mac, x64mac and x64musl.
+basic-cli 0.25.0's Windows target also fails to link on the Windows host: `lld-link` reports undefined `mainCRTStartup` and `memcpy`, the Microsoft C runtime. Installing Visual Studio 2022 Build Tools there (C++ workload with its recommended Windows SDK, 2026-10-17) does not change that. With `vcvars64.bat` applied, `LIB` lists MSVC 14.44.35207's and Windows SDK 10.0.26100.0's library folders, and the same undefined symbols remain (`mainCRTStartup`, `memcpy`, `_tls_index`, `__chkstk`, `strlen`, and `malloc`, `free` and `_fltused` from the bundled sqlite and Rust objects). Roc's link step does not name the C runtime libraries, and `roc build` has no option to add them, so the fix belongs in Roc or basic-cli. On the Mac, the same basic-cli app builds for arm64mac, x64mac and x64musl.
+
+The release `roc-nightly-2026-10-12-2664a27` on the project's GitHub page (2026-10-17) carries this container built at level 19 (400,390,546 bytes), the rocosmo-pack container, Roc's `LICENSE` and `legal_details`, Zstandard's license and SHA-256 sums. Before upload, `roc version` ran on Linux x86_64, macOS arm64 (native and Rosetta 2) and Windows x86_64.
+
+## 17. OpenBSD (2026-10-17)
+
+OpenBSD 7.9 amd64 is now a target (`openbsd-x86_64`, `uname` `OpenBSD-amd64`). P9 boots it under KVM next to FreeBSD and NetBSD.
+
+**A VM without a published image.** OpenBSD offers no cloud image, so `probes/p9_bsd_vms/run-in-vm` installs one the first time and caches the disk (`openbsd-7.9-amd64.qcow2`, 1.34 GiB used of 8 GiB):
+- **Boot.** QEMU boots the official `miniroot79.img` (5.8 MB, SHA-256 pinned). SeaBIOS's serial console shows the `boot>` prompt, and `set tty com0` moves the kernel console to serial.
+- **Answers.** The installer's autoinstall mode fetches its answers (`openbsd-install.conf`) over HTTP. `socat` serves them on a free loopback port, which QEMU's user network shows the guest as `10.0.2.2`.
+  - QEMU's `guestfwd=...-cmd:` did not work for this: the installer reported "No response file found". The observed behavior fits QEMU starting the command once when the VM starts rather than once per guest connection.
+- **Sets.** The installer fetched about 670 MB of kernels and sets from the OpenBSD CDN and verified them with signify.
+- **Reboot.** The miniroot is the preferred boot disk, so the install's reboot would start the installer again. `openbsd-install.exp` therefore stops that VM at the next `boot>` prompt and boots the installed disk alone once, so first-boot work runs, then halts it.
+- **Duration.** The whole install took about six minutes here. A failed install is not cached.
+
+Test runs boot a throwaway overlay without a network and log in on the serial console (`openbsd.exp`).
+
+**Building for OpenBSD.** Zig 0.16 ships no OpenBSD libc. Since 7.5, OpenBSD accepts system calls only from call sites registered by libc or by an `openbsd.syscalls` section ([pinsyscalls(2)](https://man.openbsd.org/pinsyscalls.2)), so the libc-free approach of the Linux runtimes does not carry over.
+- **Sysroot.** The flake's `openbsd-sysroot` package extracts headers from `comp79.tgz` and the crt objects plus `libc`, `libm`, `libpthread` and `libutil` shared libraries from `base79.tgz`. Both sets are pinned by their published SHA-256; the Nix fetch is about 625 MB, and only the extracted files are kept.
+- **Linking.** A Zig libc paths file points at the sysroot: `ZIG_LIBC` for `zig cc` (P9's payload) and `setLibCFile` in `build.zig` (the runtime, and `rocosmo-pack` built for OpenBSD). Static linking is refused ("libc of the specified target requires dynamic linking"), so the executables use `/usr/libexec/ld.so` and need `libc.so.103.0`, which ties them to OpenBSD 7.9's libc major version.
+- **Runtime size.** The runtime is 19,800 bytes (10,657 gzipped), inside P7's 12,000-byte gate. P7's size gate and the `--help` check now take their target list from `src/targets.zig`.
+
+**Results (P9, all passing).**
+- **Containers.** Universal zstd, raw and POSIX-only containers select the OpenBSD payload. Arguments and exit status pass through, a second run uses the cache (the runtime plus one payload), and running the file directly falls back to the shell.
+- **Shells.** The base `sh` (OpenBSD's ksh) and `ksh` run both formats. This confirms on a real OpenBSD kernel what §13 inferred from `oksh`: the `MZ=;eval` header keeps its NUL bytes off line 1.
+- **Tools.** The rocosmo-pack container, now nine targets and 1,519,364 bytes, runs its OpenBSD build there.
+
+**Not done.** OpenBSD on arm64 is not built or tested. Roc's own `x64openbsd` target is untested, and the rocosmo command still skips it: its libc-free P2-style executables could not run there, and an app on a libc-linked platform has not been tried.

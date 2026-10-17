@@ -4,7 +4,7 @@
 echo "CLI: rocosmo-pack as one container"
 pcd="$SCRATCH/pack-container"; mkdir -p "$pcd"
 run_capture "$ROOT/scripts/build-pack-container" "$pcd/rocosmo-pack"
-assert_rc0 "build-pack-container packs rocosmo-pack for eight targets"
+assert_rc0 "build-pack-container packs rocosmo-pack for every target"
 packc="$pcd/rocosmo-pack"
 assert_eq "the rocosmo-pack container is universal (MZ)" "MZ" "$(head -c 2 "$packc" 2>/dev/null)"
 run_capture env XDG_CACHE_HOME="$pcd/cache" "$packc" --about

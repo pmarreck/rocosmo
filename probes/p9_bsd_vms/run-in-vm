@@ -6,7 +6,14 @@
 #              user-data script that FreeBSD's nuageinit runs at boot.
 #   netbsd-*:  official live image; netbsd.exp drives its boot menu over the
 #              SeaBIOS serial console into a single-user root shell.
-# Usage: run-in-vm OS BUNDLE_DIR   (OS: freebsd-x86_64 freebsd-aarch64 netbsd-x86_64)
+#   openbsd-*: OpenBSD publishes no ready-to-boot image, so the first run
+#              installs one from the official miniroot (openbsd-install.exp,
+#              answers in openbsd-install.conf, sets fetched from the CDN and
+#              verified by the installer) and caches the installed disk;
+#              openbsd.exp logs in on the serial console (root password
+#              rocosmo-p9; the test VM has no network).
+# Usage: run-in-vm OS BUNDLE_DIR
+#   (OS: freebsd-x86_64 freebsd-aarch64 netbsd-x86_64 openbsd-x86_64)
 # Images are verified against pinned checksums and cached in
 # ${ROCOSMO_VM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/rocosmo-vm}.
 set -u
@@ -23,6 +30,8 @@ case "$os" in
 		sum=sha256sum hash=9722aea499610802de9a14bb645707fc4f6df49ff765cd9ce372b783c4693963 limit=900 ;;
 	netbsd-x86_64) url=https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.0/images/NetBSD-11.0-amd64-live.img.gz
 		sum=sha512sum hash=ad0bc2786b2cd8b7c140ae108fd780064465fe06337a3a2c3f3b694ed3a1e042b3d401c9a682be02c081f3eb3efeba1246cfd6a8803149468ebfbd9c0e7c77e8 limit=180 ;;
+	openbsd-x86_64) url=https://cdn.openbsd.org/pub/OpenBSD/7.9/amd64/miniroot79.img
+		sum=sha256sum hash=7f0ba80ce491008cce01bbefe34f1ecf820b93eb32565c3c708f5c50ea619b75 limit=180 ;;
 	*) echo "run-in-vm: unknown OS $os" >&2; exit 2 ;;
 esac
 
@@ -36,8 +45,46 @@ if [ ! -f "$image" ]; then
 	curl -sSfL -o "$part" "$url" || exit 1
 	got="$($sum "$part" | cut -d' ' -f1)"
 	[ "$got" = "$hash" ] || { echo "run-in-vm: checksum mismatch for $packed: $got" >&2; mv "$part" "$part.bad"; exit 1; }
-	case "$packed" in *.xz) xz -dc "$part" ;; *.gz) gzip -dc "$part" ;; esac >"$image.part.$$" && mv "$image.part.$$" "$image" || exit 1
-	rm -f -- "$part" # only the verified, decompressed image is kept
+	case "$packed" in
+		*.xz) xz -dc "$part" >"$image.part.$$" && mv "$image.part.$$" "$image" && rm -f -- "$part" ;;
+		*.gz) gzip -dc "$part" >"$image.part.$$" && mv "$image.part.$$" "$image" && rm -f -- "$part" ;;
+		*) mv "$part" "$image" ;;
+	esac || exit 1 # only the verified, decompressed image is kept
+fi
+
+# OpenBSD: install once from the miniroot into a cached qcow2. The installer
+# reads its answers over HTTP; socat serves them on a free loopback port.
+if [ "$os" = openbsd-x86_64 ]; then
+	miniroot="$image" image="$cache/openbsd-7.9-amd64.qcow2"
+	if [ ! -f "$image" ]; then
+		echo "run-in-vm: installing OpenBSD 7.9 into $image (one time, a few minutes)" >&2
+		inst="$(mktemp -d "${TMPDIR:-/tmp}/rocosmo-obsd-install.XXXXXX")" || exit 1
+		cat >"$inst/serve" <<-EOF
+		while IFS= read -r line && [ -n "\$(printf %s "\$line" | tr -d '\r')" ]; do :; done
+		printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n'
+		cat '$here/openbsd-install.conf'
+		EOF
+		port="" pid=""
+		for _ in 1 2 3 4 5; do
+			p=$((20000 + RANDOM % 40000))
+			socat "TCP-LISTEN:$p,bind=127.0.0.1,reuseaddr,fork" "SYSTEM:sh $inst/serve" 2>/dev/null &
+			pid=$!
+			until ss -ltnH "sport = :$p" | grep -q . || ! kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+			if kill -0 "$pid" 2>/dev/null; then port=$p; break; fi
+		done
+		[ -n "$port" ] || { echo "run-in-vm: cannot start socat" >&2; exit 1; }
+		qemu-img create -q -f qcow2 "$inst/root.qcow2" 8G || exit 1
+		timeout 2400 expect "$here/openbsd-install.exp" "$miniroot" "$inst/root.qcow2" "http://10.0.2.2:$port/install.conf" >"$inst/install.log" </dev/null
+		rc=$?
+		kill "$pid" 2>/dev/null
+		if [ $rc -ne 0 ]; then
+			echo "run-in-vm: OpenBSD install failed ($rc); log kept in $inst/install.log; last lines:" >&2
+			tr -d '\r' <"$inst/install.log" | tail -n 20 >&2
+			exit 1
+		fi
+		mv "$inst/root.qcow2" "$image.part.$$" && mv "$image.part.$$" "$image" || exit 1
+		rm -rf -- "$inst" # this install's own scratch
+	fi
 fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/rocosmo-vm.XXXXXX")" || exit 1
@@ -72,8 +119,8 @@ freebsd-*)
 	fi
 	rc=$?
 	;;
-netbsd-*)
-	timeout "$limit" expect "$here/netbsd.exp" "$work/root.qcow2" "$work/bundle.tar" >"$work/serial.log" </dev/null
+netbsd-*|openbsd-*)
+	timeout "$limit" expect "$here/${os%%-*}.exp" "$work/root.qcow2" "$work/bundle.tar" >"$work/serial.log" </dev/null
 	rc=$?
 	;;
 esac

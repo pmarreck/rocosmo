@@ -1,6 +1,6 @@
 # How a rocosmo container works
 
-A rocosmo container is one file that runs natively on Linux, macOS, Windows, FreeBSD and NetBSD, on x86_64 and aarch64. It is assembled from ordinary native executables, one per OS and CPU. For Roc programs those come from Roc's own cross-compiler, but `rocosmo-pack` accepts any executables. Nothing is translated or emulated: each machine ends up running the executable that was built for it.
+A rocosmo container is one file that runs natively on Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD, on x86_64 and aarch64. It is assembled from ordinary native executables, one per OS and CPU. For Roc programs those come from Roc's own cross-compiler, but `rocosmo-pack` accepts any executables. Nothing is translated or emulated: each machine ends up running the executable that was built for it.
 
 The idea comes from Justine Tunney's [Actually Portable Executable](https://justine.lol/ape.html) (APE) format in [Cosmopolitan](https://github.com/jart/cosmopolitan), which showed that one file can be both a Windows PE image and a POSIX shell script. rocosmo uses no Cosmopolitan code, and its header differs from APE's (see [The universal format](#the-universal-format)). [APE_DISPATCH.md](APE_DISPATCH.md) compares the two designs in detail, and [RESEARCH.md](RESEARCH.md) holds the measurements and test evidence behind the choices described here.
 
@@ -182,4 +182,4 @@ The `rocosmo` command does the whole job for a Roc app: `rocosmo app.roc` reads 
 - A raw `execve(2)` of the universal format fails with `ENOEXEC`; shells, `execvp` and `sh app` work. The POSIX-only format has no such limit, and cannot run on Windows.
 - The dispatcher must fit the PE's header space, about 3 KB, which bounds the number of targets in the universal format.
 - On Linux, each start of a memfd payload pays its decode time, about 6.7 ms per MB of payload on the machine measured in RESEARCH.md §15.
-- OpenBSD is not supported yet.
+- OpenBSD is x86_64 only, and its payloads must link OpenBSD's libc: since 7.5 the kernel accepts system calls only from call sites registered by libc or by an `openbsd.syscalls` section (pinsyscalls(2)), so the libc-free executables rocosmo builds for Linux have no OpenBSD counterpart. The OpenBSD runtime and the tested payloads link OpenBSD's libc dynamically (RESEARCH.md §17).
