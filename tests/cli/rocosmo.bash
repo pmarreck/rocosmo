@@ -46,6 +46,21 @@ assert_eq "no Windows: #!/bin/sh container" "#!/bin/sh" "$(head -n 1 "$posix_out
 run_capture env XDG_CACHE_HOME="$cmd/cache" "$posix_out" 20
 assert_eq "POSIX-only container runs here" "121" "$out"
 
+# Roc's cache: kept by default; --no-cache reaches every `roc build`. A ROC
+# wrapper records each build's arguments and runs the real compiler.
+real_roc="$(command -v roc)"
+printf '#!/bin/sh\n[ "$1" = build ] && echo "$*" >>"%s"\nexec "%s" "$@"\n' "$cmd/roc.log" "$real_roc" >"$cmd/roc-logged"
+chmod +x "$cmd/roc-logged"
+for mode in default --no-cache; do
+	: >"$cmd/roc.log"
+	run_capture env -C "$cmd/posix" ROC="$cmd/roc-logged" "$rocosmo" ${mode#default} -o "$cmd/posix/app-$mode" app.roc
+	assert_rc0 "rocosmo $mode packs the POSIX-only app"
+	builds="$(wc -l <"$cmd/roc.log" | tr -d ' ')"
+	nocache="$(grep -c -- '^build --no-cache ' "$cmd/roc.log")"
+	want=0; [ "$mode" = --no-cache ] && want="$builds"
+	[ "$builds" -gt 0 ] && [ "$nocache" = "$want" ] && pass "$mode: $nocache of $builds roc builds pass --no-cache" || fail "$mode: roc builds and --no-cache" "$(cat "$cmd/roc.log")"
+done
+
 # Nothing packable: a clear failure, no output.
 cp -r -- "$p2src" "$cmd/none"
 sed -i -e '/x64musl: {/d' -e '/arm64musl: {/d' -e '/mac: {/d' -e '/x64win: {/d' -e '/x64openbsd: {/d' "$cmd/none/platform/main.roc"

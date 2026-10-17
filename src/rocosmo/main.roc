@@ -24,6 +24,9 @@ usage =
 	\\  -o, /o, --output OUT   output path (default: the app name)
 	\\  --app-id ID            cache namespace, lowercase reverse-DNS
 	\\  --layout raw|zstd|auto passed to rocosmo-pack (default auto)
+	\\  --no-cache             pass --no-cache to every roc build, so the output
+	\\                         does not depend on what Roc's cache holds
+	\\  --cache                use Roc's cache (the default)
 	\\  -v, --verbose          let rocosmo-pack report layout and size
 	\\  -h, --help             show this help
 	\\      --about            one-line description
@@ -125,7 +128,7 @@ run! = |opts| {
 build_and_pack! = |roc, packer, opts, builds, dir, output| {
 	for b in builds {
 		Stderr.line!("rocosmo: building ${b.target} -> ${b.slot}") ?? {}
-		run_tool!(roc, Plan.roc_build_args(opts.source, dir, b.target))?
+		run_tool!(roc, Plan.roc_build_args(opts.source, dir, b.target, opts.no_cache))?
 	}
 	run_tool!(packer, Plan.pack_args(builds, dir, { output, app_id: opts.app_id, layout: opts.layout, verbose: opts.verbose }))
 }

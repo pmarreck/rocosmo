@@ -56,10 +56,12 @@ This works on Linux and macOS hosts; a container packed on a Mac is byte-identic
 `rocosmo app.roc` reads the targets the app's platform declares, runs `roc build` once for each, and joins the executables with `rocosmo-pack`. If the platform declares a Windows target the result is the universal file; otherwise it is the `#!/bin/sh` one. When two declared targets fill the same slot, static Linux (musl) is preferred over glibc and Microsoft's toolchain over MinGW. Targets rocosmo cannot pack yet (Windows on Arm, 32-bit ARM, WebAssembly) are reported and skipped. Roc's `x64openbsd` target needs a platform whose host links OpenBSD's libc, because OpenBSD accepts system calls only from libc; the test platform in `probes/p2_native_targets` does, and its output runs on OpenBSD 7.9. Roc has no arm64 OpenBSD target.
 
 ```text
-rocosmo [-o OUT] [--app-id ID] [--layout raw|zstd|auto] [-v] APP.roc
+rocosmo [-o OUT] [--app-id ID] [--layout raw|zstd|auto] [--no-cache] [-v] APP.roc
 ```
 
 `ROC` and `ROCOSMO_PACK` choose the `roc` and `rocosmo-pack` executables. The platform has to cross-build its own targets, and if one fails `rocosmo` stops with Roc's error. basic-cli 0.25.0, for example, builds its Linux targets anywhere and its macOS targets only on a Mac, and its Windows target does not link from Linux or macOS yet.
+
+By default `roc build` uses Roc's build cache, which makes repeat builds fast. A warm cache can change the output bytes, though: with the same Roc nightly, a Linux x86_64 build of the test app is 10,128 bytes from an empty cache and 10,096 bytes from a warm one (RESEARCH.md §17). `--no-cache` passes `--no-cache` to every `roc build`, so the container does not depend on what that machine built before, at the cost of a full compile per target. `--cache` restores the default; the later switch wins.
 
 ### `rocosmo-pack`: join any native executables
 

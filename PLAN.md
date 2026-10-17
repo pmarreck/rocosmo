@@ -4,12 +4,11 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Decided 2026-10-17 (BDFN)
 
-- [x] Visual Studio 2022 Build Tools (C++ workload, Windows SDK 10.0.26100.0) installed on the Windows test host with winget from PowerShell. basic-cli's x64win still fails to link: Roc's link step names no C runtime library, even with vcvars64 applied (RESEARCH.md §16) (done 2026-10-17 00:33 EDT)
 - [x] OpenBSD 7.9 x86_64: target, runtime and rocosmo-pack build against a pinned sysroot from the official sets; P9 installs a VM unattended from the miniroot and every container check passes there, base ksh included (RESEARCH.md §17) (done 2026-10-17 00:46 EDT)
 - [x] OpenBSD 7.9 arm64: openbsd-aarch64 target and runtime from a two-CPU sysroot; P9 installs an emulated arm64 VM unattended and every container check passes there (RESEARCH.md §17) (done 2026-10-17 09:50 EDT)
 - [x] Roc's x64openbsd on a libc-linked platform: P2's platform lists OpenBSD's crt objects and libc, the output runs on OpenBSD amd64 from a container, and Plan.roc maps it (done 2026-10-17 09:50 EDT)
 - [x] P2 builds with roc build --no-cache: a warm Roc cache changed x64musl's bytes and broke P4's cross-host identity (RESEARCH.md §17) (done 2026-10-17 09:50 EDT)
-- [ ] Decide whether the rocosmo command should pass --no-cache too, so its output does not depend on the host's Roc cache (costs a full compile per target).
+- [x] rocosmo command: `--no-cache` passes --no-cache to every roc build; caching stays the default (`--cache` restores it); README documents both (done 2026-10-17 12:50 EDT)
 
 ## Publishing (BDFN, 2026-10-14)
 
