@@ -111,14 +111,24 @@ case "$rc:$err" in "1:rocosmo-runtime: plan9-mips: "?*) pass "runtime refuses a 
 : > "$p7/rt-exists"
 run_capture "$rt" "$app" ${xy% *} ${xy#* } linux-x86_64 "$p7/rt-exists"
 assert_eq "runtime never overwrites an existing OUT" "1:rocosmo-runtime: $p7/rt-exists: File exists" "$rc:$err"
-# Size gate: every runtime, with the small zstd decoder at -Oz, is 9.9-11.3 KB
-# gzipped (RESEARCH.md section 15); the gate leaves under 1 KB of headroom.
-# The targets come from the table in src/targets.zig.
+# Size gate: the x86_64/aarch64 Linux runtimes link no C library (nolibc) and
+# the macOS/BSD runtimes link the system libc dynamically; all are 9.9-11.3 KB
+# gzipped (RESEARCH.md section 15), gated at 12000 with under 1 KB of headroom.
+# The other Linux architectures link Zig's bundled musl statically, so they run
+# on any Linux of that CPU regardless of its libc; that static startup makes
+# them larger (14-18 KB gzipped), gated separately. The targets come from the
+# table in src/targets.zig.
 rt_gate=12000
+rt_gate_static=20000
 for t in $(grep -o '\.name = "[^"]*"' "$ROOT/src/targets.zig" | cut -d'"' -f2); do
 	[ -s "$rt_dir/$t" ] || { fail "$t runtime is built" "no $rt_dir/$t"; continue; }
 	gz=$(gzip -9 -n -c "$rt_dir/$t" | wc -c)
-	[ "$gz" -le "$rt_gate" ] && pass "$t runtime is at most $rt_gate bytes gzipped ($gz)" || fail "$t runtime gzipped size" "$gz > $rt_gate"
+	case "$t" in
+		linux-x86_64|linux-aarch64|macos-*|freebsd-*|netbsd-*|openbsd-*) gate=$rt_gate;;
+		linux-*) gate=$rt_gate_static;;  # static musl, larger but maximally portable
+		*) gate=$rt_gate;;
+	esac
+	[ "$gz" -le "$gate" ] && pass "$t runtime is at most $gate bytes gzipped ($gz)" || fail "$t runtime gzipped size" "$gz > $gate"
 done
 
 # --- linux aarch64: runtime and payload under qemu-user (emulation) ---

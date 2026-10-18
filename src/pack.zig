@@ -22,7 +22,7 @@ pub const Payload = struct {
 	bytes: []const u8,
 };
 
-pub const Arch = enum { x86_64, aarch64 };
+pub const Arch = enum { x86_64, aarch64, arm, riscv64, powerpc64le, x86, loongarch64, s390x };
 
 pub const Target = struct {
 	/// Index name, e.g. "linux-x86_64"; also the runtime's target argument.

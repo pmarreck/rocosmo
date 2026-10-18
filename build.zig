@@ -37,6 +37,12 @@ fn addMuslHeaders(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Ar
 const runtime_targets = [_][2][]const u8{
 	.{ "linux-x86_64", "x86_64-linux-musl" },
 	.{ "linux-aarch64", "aarch64-linux-musl" },
+	.{ "linux-arm", "arm-linux-musleabihf" },
+	.{ "linux-riscv64", "riscv64-linux-musl" },
+	.{ "linux-powerpc64le", "powerpc64le-linux-musl" },
+	.{ "linux-x86", "x86-linux-musl" },
+	.{ "linux-loongarch64", "loongarch64-linux-musl" },
+	.{ "linux-s390x", "s390x-linux-musl" },
 	.{ "macos-x86_64", "x86_64-macos" },
 	.{ "macos-arm64", "aarch64-macos" },
 	.{ "freebsd-x86_64", "x86_64-freebsd" },
@@ -65,9 +71,13 @@ fn runtimesModule(b: *std.Build, zstd_src: []const u8, openbsd_sysroot: []const 
 	for (runtime_targets) |rt| {
 		const query = std.Target.Query.parse(.{ .arch_os_abi = rt[1] }) catch @panic("bad runtime triple");
 		const t = b.resolveTargetQuery(query);
-		// Linux runtimes link no C library: nolibc_linux.c supplies the few
-		// functions used, compiled against musl's headers (prototypes only).
-		const libc = t.result.os.tag != .linux;
+		// The x86_64 and aarch64 Linux runtimes link no C library: nolibc_linux.c
+		// supplies the few functions used, compiled against musl's headers
+		// (prototypes only). Every other target, including the other Linux
+		// architectures, links Zig's bundled libc for that OS/CPU.
+		const a = t.result.cpu.arch;
+		const nolibc = t.result.os.tag == .linux and (a == .x86_64 or a == .aarch64);
+		const libc = !nolibc;
 		const core = b.createModule(.{ .root_source_file = b.path("src/rt_ffi.zig"), .target = t, .optimize = .ReleaseSmall, .link_libc = libc, .strip = true, .single_threaded = true, .unwind_tables = .none });
 		if (!libc) addMuslHeaders(b, core, t.result.cpu.arch);
 		addZstdSmall(b, core, zstd_src);
