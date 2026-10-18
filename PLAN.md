@@ -11,6 +11,7 @@ Completed items are retired to docs/PLAN_LOG.md. Background for open items lives
 
 ## Publishing (BDFN, 2026-10-14)
 
+- [x] Build the `roc` container with `--windows-launcher`, measure its size against the 400 MB uncompressed-PE container, and publish both so either can be shared (done 2026-10-17 22:20 EDT). 188,462,705 bytes vs 400,390,546 (53% smaller). Verified on the Windows host: Defender active+current, runs under real-time protection (rebuilds and prints the pinned nightly), container and rebuilt cache exe both scan clean. Published to the roc-nightly-2026-10-12-2664a27 pre-release as the `roc-compact` asset beside `roc`, SHA256SUMS and notes updated. `scripts/build-roc-container` grew a `--windows-launcher` flag.
 - [ ] basic-cli 0.25.0: macOS targets build on a Mac (verified 2026-10-16) but not from Linux (no libSystem stub); x64win needs Microsoft's C runtime libraries and fails on Linux, macOS and the Windows host alike (RESEARCH.md §16). Platform's responsibility; rocosmo stops with Roc's error.
 - [ ] The rocosmo command as a container: blocked on basic-cli (no Windows link anywhere; macOS targets only on a Mac). Alternatives: build its macOS slots on the Mac host, or move it to a platform that cross-builds every target.
 - [ ] Recover the decode speed the small decoder lost (about 3x slower; +3 ms per MB on each Linux memfd start): a size-and-speed decoder, differential-tested against libzstd (RESEARCH.md §15; requirements in docs/ZSTD_DECODER_SPEC.md).
