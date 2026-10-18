@@ -5,3 +5,4 @@ result-*
 local/
 zig-out/
 .zig-cache/
+examples/rust_hello/target/

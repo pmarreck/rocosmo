@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Build a small Rust program as one rocosmo container. Rust's compiler is not a
+# single file (rustc is a ~16 KB shim that dynamically links librustc_driver and
+# libLLVM and needs a multi-hundred-MB sysroot), so this packs the compiler's
+# OUTPUT instead: one tiny program (examples/rust_hello) cross-compiled for
+# several OS/CPU targets and joined into one universal binary. It runs natively
+# on each of them; name it rust-hello.exe on Windows.
+#
+# The program is built with rustup + cargo-zigbuild (Zig as the cross-linker),
+# which covers the targets that need no Apple SDK: Linux x86_64 and aarch64
+# (static musl) and Windows x86_64 (GNU). macOS cross-compilation needs an Apple
+# SDK and is left out of this Linux-only example; on a Mac you could add the two
+# Apple slots the same way. See examples/README.md.
+#
+# Usage: examples/build-rust-container OUT [--level N]
+#   --level N  zstd level, 1-22 (default 19)
+# Environment: ROCOSMO_PACK (default: build zig-out/bin/rocosmo-pack).
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+out="" level=19
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--level) [ $# -ge 2 ] || { echo "usage: build-rust-container OUT [--level N]" >&2; exit 2; }; level="$2"; shift 2;;
+		-h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+		-*) echo "usage: build-rust-container OUT [--level N]" >&2; exit 2;;
+		*) [ -z "$out" ] || { echo "usage: build-rust-container OUT [--level N]" >&2; exit 2; }; out="$1"; shift;;
+	esac
+done
+[ -n "$out" ] || { echo "usage: build-rust-container OUT [--level N]" >&2; exit 2; }
+
+# rocosmo-pack is built in the project's own dev shell (it needs the pinned Zig
+# and the vendored zstd sources); the Rust cross-build runs in a separate shell
+# with rustup and cargo-zigbuild.
+pack="${ROCOSMO_PACK-}"
+if [ -z "$pack" ]; then
+	nix develop "$root" -c zig build --summary none || exit 1
+	pack="$root/zig-out/bin/rocosmo-pack"
+fi
+
+if [ -z "${_ROCOSMO_RUST_ENV-}" ]; then
+	exec nix shell nixpkgs#rustup nixpkgs#cargo-zigbuild nixpkgs#zig \
+		-c env _ROCOSMO_RUST_ENV=1 ROCOSMO_PACK="$pack" "${BASH_SOURCE[0]}" "$out" --level "$level"
+fi
+
+crate="$root/examples/rust_hello"
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/rocosmo-examples/rust"
+export RUSTUP_HOME="$cache/rustup" CARGO_HOME="$cache/cargo"
+export PATH="$CARGO_HOME/bin:$PATH"
+export CARGO_TARGET_DIR="$cache/target"
+
+rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || { echo "build-rust-container: rustup install failed" >&2; exit 1; }
+rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-gnu >/dev/null 2>&1 || { echo "build-rust-container: adding targets failed" >&2; exit 1; }
+
+# triple  slot  binary-name
+builds="
+x86_64-unknown-linux-musl   linux-x86_64   rust_hello
+aarch64-unknown-linux-musl  linux-aarch64  rust_hello
+x86_64-pc-windows-gnu       windows-x86_64 rust_hello.exe
+"
+pack_args=(--layout zstd --level "$level" --app-id dev.rocosmo.rusthello)
+while read -r triple slot binname; do
+	[ -n "${triple:-}" ] || continue
+	echo "build-rust-container: compiling $triple -> $slot" >&2
+	(cd "$crate" && cargo zigbuild --release --target "$triple" >/dev/null 2>&1) || { echo "build-rust-container: cargo zigbuild $triple failed" >&2; exit 1; }
+	bin="$CARGO_TARGET_DIR/$triple/release/$binname"
+	[ -f "$bin" ] || { echo "build-rust-container: missing $bin" >&2; exit 1; }
+	pack_args+=("--$slot" "$bin")
+done <<EOF
+$builds
+EOF
+
+"$pack" "${pack_args[@]}" -o "$out"

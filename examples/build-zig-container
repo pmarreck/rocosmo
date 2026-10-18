@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Build the Zig compiler as one rocosmo container: the official Zig 0.16.0
+# release for every OS/CPU rocosmo targets (Windows x86_64; Linux and macOS on
+# x86_64 and aarch64), joined by rocosmo-pack. The result runs `zig` natively on
+# each of them; name it zig.exe on Windows.
+#
+# Zig ships one self-contained executable per platform (the Linux builds are
+# statically linked against musl), so no compiler is needed here: this only
+# downloads the official releases, verifies their published SHA-256, and packs
+# the five `zig` executables.
+#
+# Note: `zig version`, `zig env` and the like run straight from the container.
+# Compiling additionally needs Zig's `lib/` directory, which `zig` locates next
+# to its own executable; from rocosmo's in-memory or cached copy that directory
+# is not present, so point `ZIG_LIB_DIR` at a matching `lib/` (the same `lib/`
+# that ships in these archives). That is Zig's own requirement, not a rocosmo
+# limitation. See examples/README.md.
+#
+# Usage: examples/build-zig-container OUT [--level N]
+#   --level N  zstd level, 1-22 (default 19)
+# Environment: ROCOSMO_PACK (default: build zig-out/bin/rocosmo-pack).
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -z "${IN_NIX_SHELL-}" ]; then
+	exec nix develop "$root" -c "$root/examples/build-zig-container" "$@"
+fi
+usage() { printf 'usage: build-zig-container OUT [--level N]\n' >&2; exit 2; }
+out="" level=19
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--level) [ $# -ge 2 ] || usage; level="$2"; shift 2;;
+		-h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+		-*) usage;;
+		*) [ -z "$out" ] || usage; out="$1"; shift;;
+	esac
+done
+[ -n "$out" ] || usage
+
+ver=0.16.0
+base="https://ziglang.org/download/$ver"
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/rocosmo-examples/zig-$ver"
+mkdir -p "$cache"
+
+# slot  archive-name  sha256  member-inside-archive
+targets="
+windows-x86_64 zig-x86_64-windows-$ver.zip    68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e zig-x86_64-windows-$ver/zig.exe
+linux-x86_64   zig-x86_64-linux-$ver.tar.xz    70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00 zig-x86_64-linux-$ver/zig
+linux-aarch64  zig-aarch64-linux-$ver.tar.xz   ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17 zig-aarch64-linux-$ver/zig
+macos-x86_64   zig-x86_64-macos-$ver.tar.xz    0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7 zig-x86_64-macos-$ver/zig
+macos-arm64    zig-aarch64-macos-$ver.tar.xz   b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489 zig-aarch64-macos-$ver/zig
+"
+
+fetch_verify() { # archive sha
+	local f="$cache/$1"
+	if [ ! -f "$f" ]; then
+		echo "build-zig-container: downloading $1" >&2
+		curl -fSL --retry 3 -o "$f.tmp" "$base/$1" || { echo "download failed: $1" >&2; return 1; }
+		mv "$f.tmp" "$f"
+	fi
+	local got; got="$(sha256sum "$f" | cut -d' ' -f1)"
+	[ "$got" = "$2" ] || { echo "build-zig-container: SHA-256 mismatch for $1 (got $got, want $2)" >&2; return 1; }
+}
+
+extract_member() { # archive member dest
+	local f="$cache/$1"
+	case "$1" in
+		*.zip) (cd "$cache" && unzip -o -q "$f" "$2" && cp "$cache/$2" "$3");;
+		*.tar.xz) tar -xJf "$f" -C "$cache" "$2" && cp "$cache/$2" "$3";;
+	esac
+}
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/zig-container.XXXXXX")"
+pack_args=(--layout zstd --level "$level" --app-id dev.rocosmo.zig)
+while read -r slot archive sha member; do
+	[ -n "${slot:-}" ] || continue
+	fetch_verify "$archive" "$sha" || exit 1
+	dest="$work/$slot"; [ "$slot" = windows-x86_64 ] && dest="$dest.exe"
+	extract_member "$archive" "$member" "$dest" || { echo "extract failed: $archive" >&2; exit 1; }
+	pack_args+=("--$slot" "$dest")
+done <<EOF
+$targets
+EOF
+
+pack="${ROCOSMO_PACK-}"
+if [ -z "$pack" ]; then
+	(cd "$root" && zig build --summary none) || exit 1
+	pack="$root/zig-out/bin/rocosmo-pack"
+fi
+"$pack" "${pack_args[@]}" -o "$out"

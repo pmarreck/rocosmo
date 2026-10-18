@@ -1,0 +1,16 @@
+[package]
+name = "rust_hello"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rust_hello"
+path = "src/main.rs"
+
+# Small, self-contained output: no dependencies, size-optimized, panic=abort.
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

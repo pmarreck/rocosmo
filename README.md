@@ -112,6 +112,16 @@ The app id is lowercase reverse-DNS (`org.example.tool`). `--app-id` sets it. Ot
 - **Zig:** `export const rocosmo_app_id = "ROCOSMO_APP_ID=org.example.tool;".*;`
 - **Rust:** a `#[used] static` holding the same bytes. Reference it, for example from `--about`, so the linker keeps it.
 
+## Examples
+
+The technique is not specific to Roc. [examples/](examples/) packs other
+toolchains the same way: the official Zig compiler becomes one universal `zig`
+(318 MB) that runs and compiles on Linux, macOS and Windows, and a small Rust
+program cross-built for several targets becomes one 622 KB universal binary.
+Rust's own `rustc` is a shim over a large dynamically-linked sysroot, so it is
+not a single-file compiler; [examples/README.md](examples/README.md) explains
+what each example proves and its caveats.
+
 ## Status
 
 A working prototype with no releases yet. The format, the packer, the runtimes and the `rocosmo` command are tested on every system in the table above. Planned work is in [PLAN.md](PLAN.md), and the project's scope is in [INTENT.md](INTENT.md).
