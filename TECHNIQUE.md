@@ -181,7 +181,8 @@ The `rocosmo` command does the whole job for a Roc app: `rocosmo app.roc` reads 
 ## Limits
 
 - Windows on Arm runs the x86_64 image under emulation. A native arm64 Windows path would need a relay inside the x64 image (APE_DISPATCH.md §5).
-- A raw `execve(2)` of the universal format fails with `ENOEXEC`; shells, `execvp` and `sh app` work. The POSIX-only format has no such limit, and cannot run on Windows.
+- A raw `execve(2)` of the universal format fails with `ENOEXEC`, so a non-shell launcher (a C program, a service manager, another language's `exec` API) does not start it automatically; shells, glibc `execvp` and `sh app` do. For those callers, run it as `sh app`, or use the POSIX-only format (shebang at offset 0), which a raw `execve(2)` starts directly but which cannot run on Windows (see the dispatch section above).
+- Under WSL2 a binfmt_misc handler for `MZ` files starts the embedded Windows image from `./app`; run `sh app` to get the Linux payload. Registering such an `MZ` binfmt_misc handler yourself is the same mechanism and the same ambiguity, not a fix for the raw-`execve` limit above.
 - The dispatcher must fit the PE's header space, about 3 KB, which bounds the number of targets in the universal format.
 - On Linux, each start of a memfd payload pays its decode time, about 6.7 ms per MB of payload on the machine measured in RESEARCH.md §15.
 - OpenBSD payloads must link OpenBSD's libc: since 7.5 the kernel accepts system calls only from call sites registered by libc or by an `openbsd.syscalls` section (pinsyscalls(2)), so the libc-free executables rocosmo builds for Linux have no OpenBSD counterpart. The OpenBSD runtime and the tested payloads link OpenBSD's libc dynamically (RESEARCH.md §17).
