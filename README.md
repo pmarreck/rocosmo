@@ -29,6 +29,7 @@ Projects with no Windows build get a plain `#!/bin/sh` file with the same dispat
 | --- | --- | --- |
 | Linux | x86_64 | native, six shells (`dash`, `bash`, `zsh`, `busybox sh`, `oksh`, `mksh`), and WSL2 |
 | Linux | aarch64 | runtime and payload under qemu-user; no aarch64 Linux hardware tested |
+| Linux | arm (32-bit), riscv64, powerpc64le, x86 (i386), loongarch64, s390x | runtime and payload under qemu-user, from one container holding all eight Linux CPUs (`tests/cli/arch_matrix.bash`); no hardware tested |
 | macOS | arm64 (Apple Silicon) | native hardware |
 | macOS | x86_64 | Rosetta 2 on Apple Silicon |
 | Windows | x86_64 | native hardware |
@@ -70,10 +71,22 @@ rocosmo-pack -v \
 	--windows-x86_64 app.exe \
 	--linux-x86_64 app-x64musl --linux-aarch64 app-arm64musl \
 	--macos-x86_64 app-x64mac --macos-arm64 app-arm64mac \
-	-o app                       # also: --freebsd-x86_64 --freebsd-aarch64 --netbsd-x86_64 --openbsd-x86_64 --openbsd-aarch64
+	-o app                       # rocosmo-pack --help lists every target flag
 ```
 
 To get inputs to try it with, `probes/p2_native_targets/build OUTDIR` builds a small Roc test app for every target.
+
+A container lists the targets it carries when its only argument is `--rocosmo-platforms`. It extracts and runs nothing:
+
+```text
+$ sh app --rocosmo-platforms
+windows-x86_64
+linux-x86_64       Linux-x86_64|Linux-amd64
+linux-riscv64      Linux-riscv64
+macos-arm64        Darwin-arm64|Darwin-aarch64
+```
+
+The second column is the `uname -s`-`uname -m` pattern that selects each target. The shell dispatcher answers the flag, so on Windows, where the file runs as the app's own PE, the flag goes to the app. In any other position it also goes to the app. In the universal format the dispatcher has to fit in the space before the PE's first section; with a PE whose first section is at 0x1000 and that has up to seven sections (`zig.exe`, for example), every target in the table fits, with no room for more.
 
 `scripts/build-pack-container OUT` packs `rocosmo-pack` itself into one 1.6 MB file for all ten targets, so it runs without Nix or Zig on every system in the table above. The tests run it on Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD, and on Linux, macOS and Windows its containers are byte-identical to the ones the native build writes.
 

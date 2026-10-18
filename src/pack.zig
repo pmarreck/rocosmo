@@ -20,6 +20,9 @@ pub const Payload = struct {
 	/// `uname -s`-`uname -m` case pattern, e.g. "Linux-x86_64|Linux-amd64".
 	pattern: []const u8,
 	bytes: []const u8,
+	/// Known target name (e.g. "linux-x86_64") for --rocosmo-platforms; null
+	/// for a custom --payload pattern.
+	name: ?[]const u8 = null,
 };
 
 pub const Arch = enum { x86_64, aarch64, arm, riscv64, powerpc64le, x86, loongarch64, s390x };
@@ -176,13 +179,36 @@ fn shortHash(bytes: []const u8) [16]u8 {
 	return std.fmt.bytesToHex(digest[0..8], .lower);
 }
 
-/// Trampoline prefix, cache-home logic and the app id (validated: safe as shell text).
+/// Trampoline prefix, cache-home logic, the app id (validated: safe as shell
+/// text) and the --rocosmo-platforms handler.
 fn writeStart(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format, id: []const u8) !void {
 	try writePrefix(list, gpa, format);
 	try list.appendSlice(gpa, script_start);
 	try list.appendSlice(gpa, "a=");
 	try list.appendSlice(gpa, id);
 	try list.append(gpa, '\n');
+	try list.appendSlice(gpa, platforms_head);
+	if (format == .universal) try list.appendSlice(gpa, "echo windows-x86_64\n");
+	try list.appendSlice(gpa, if (format == .universal) platforms_read_universal else platforms_read_posix);
+	try list.appendSlice(gpa, platforms_tail);
+}
+
+/// `--rocosmo-platforms` (as the only argument) lists the targets without
+/// extracting anything. Rather than repeat the target table, it reads this
+/// script's own case table (dd from the script region): entry lines contain
+/// ") i=" and the table ends at the `*)` line. Its size is fixed, which matters
+/// because the universal format's script must fit inside the PE header area.
+/// The `")"" i="` spelling keeps this handler's own line from matching. The
+/// Windows entry (the PE itself, or the launcher's index entry) is listed
+/// first and plainly, so `Windows-*` case lines are skipped. Columns are padded
+/// with a loop and echo, not printf, which pdksh-family shells (OpenBSD and
+/// NetBSD sh) do not build in.
+const platforms_head = "case ${1-} in --rocosmo-platforms)[ $# = 1 ]||{ echo \"usage: $0 --rocosmo-platforms\">&2;exit 2;}\n";
+const platforms_read_universal = "dd if=\"$s\" bs=64 skip=1 count=128 2>/dev/null";
+const platforms_read_posix = "dd if=\"$s\" bs=64 skip=2 count=128 2>/dev/null";
+const platforms_tail = "|while IFS= read -r l;do case $l in \"*)\"*)break;;Windows-*)continue;;*\")\"\" i=\"*);;*)continue;;esac;m='(custom)';case $l in *\" p=\"*)m=${l##* p=};m=${m%%[ ;]*};esac;while [ ${#m} -lt 18 ];do m=\"$m \";done;echo \"$m ${l%%)*}\";done;exit 0;;esac\n";
+comptime {
+	if (Format.universal.start() != 64 or Format.posix.start() != 128) @compileError("platforms_read_* skip values assume these script starts");
 }
 
 /// The first 64 bytes: the trampoline line, padded. The universal format
@@ -212,6 +238,11 @@ fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format,
 		try list.appendSlice(gpa, &shortHash(p.bytes));
 		try appendPadded(list, gpa, " o=", off);
 		try appendPadded(list, gpa, " n=", p.bytes.len);
+		if (p.name) |name| {
+			if (!index.validName(name)) return error.InvalidName;
+			try list.appendSlice(gpa, " p=");
+			try list.appendSlice(gpa, name);
+		}
 		try list.appendSlice(gpa, ";;\n");
 	}
 	try list.appendSlice(gpa, script_tail);
@@ -777,8 +808,9 @@ test "identical payload bytes get identical cache identities; different bytes di
 	const c = try pack(gpa, pe, &.{.{ .pattern = "Linux-x86_64", .bytes = "two" }}, test_id);
 	defer gpa.free(c);
 	try testing.expectEqualSlices(u8, a, b);
-	const ia = std.mem.indexOf(u8, a, "i=").?;
-	const ic = std.mem.indexOf(u8, c, "i=").?;
+	// The case entry's hash (") i="), not the --rocosmo-platforms handler's text.
+	const ia = std.mem.indexOf(u8, a, ") i=").? + 2;
+	const ic = std.mem.indexOf(u8, c, ") i=").? + 2;
 	try testing.expect(!std.mem.eql(u8, a[ia..][0..18], c[ic..][0..18]));
 }
 

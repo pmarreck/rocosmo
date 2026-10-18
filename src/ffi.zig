@@ -35,7 +35,14 @@ export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payl
 	defer gpa.free(list);
 	for (list, 0..) |*p, i| {
 		const src = payloads.?[i];
-		p.* = .{ .pattern = src.pattern[0..src.pattern_len], .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{} };
+		const pattern = src.pattern[0..src.pattern_len];
+		// A known target's pattern carries its name (listed by --rocosmo-platforms);
+		// a custom --payload pattern has none.
+		var name: ?[]const u8 = null;
+		for (targets.known) |k| if (std.mem.eql(u8, k.pattern, pattern)) {
+			name = k.name;
+		};
+		p.* = .{ .pattern = pattern, .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{}, .name = name };
 	}
 	const result = pack.pack(gpa, pe_slice.pe, list, idp[0..id_len]) catch |e| return switch (e) {
 		error.InvalidAppId => .invalid_app_id,

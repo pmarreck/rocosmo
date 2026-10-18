@@ -80,6 +80,7 @@ annotate=[
 	tests/cli/arch_matrix.bash = Architecture matrix: pack exit-145 payloads for all 8 Linux CPUs into one zstd container; verify embedded==built runtime and full rebuild+exec under qemu-user per arch
 	tests/cli/examples_compilers.bash = Offline mechanism check for the examples: packs dev-shell zig and a compiled rust_hello, verifies run and (for zig) compile from the container
 	tests/cli/pack_container.bash = rocosmo-pack container: runs and packs identically on Linux, macOS, Windows
+	tests/cli/platforms_flag.bash = --rocosmo-platforms: listing per layout/format, six shells with minimal PATH, pass-through, macOS /bin/sh, 3520-byte header-area fit budget
 	tests/cli/roc_container.bash = Roc compiler container: runs and builds apps on Linux, macOS, Windows hosts
 	tests/cli/rocosmo.bash = rocosmo command tests: Plan expects, CLI surface, universal and POSIX-only end-to-end
 	tests/cli/toolchain_hosts.bash = Windows and macOS hosts build and pack P2 with only the Roc and rocosmo-pack containers
