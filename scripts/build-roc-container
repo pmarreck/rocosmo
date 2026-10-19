@@ -4,8 +4,8 @@
 # Windows x86_64), joined by rocosmo-pack. The result runs `roc` natively on
 # each of them; name it roc.exe on Windows.
 # Usage: scripts/build-roc-container OUT [--level N] [--windows-launcher]
-#   --level N           zstd level, 1-22 (default 19: 400 MB in about 12 minutes
-#                       and 2 GB of memory; 3 takes about 16 seconds and is 9%
+#   --level N           zstd level, 1-22 (default 19: 400 MB in about 2.5 minutes
+#                       on 8 threads, 12 on one; 3 takes about 16 seconds and is 9%
 #                       larger)
 #   --windows-launcher  store the Windows build compressed behind a small
 #                       launcher instead of uncompressed; about 53% smaller

@@ -48,7 +48,9 @@ none of the tests below needed them.
 | Windows 10 x86_64 | native, as `zig.exe`; Microsoft Defender scan of the container and of the installed directory finds no threat | compiles `hello.zig`, which exits 145 |
 | Linux aarch64, riscv64 | emulated (qemu-user) | compiles and links `hello.zig` (`-fno-lld`); it exits 145 under qemu |
 | Linux arm (32-bit), powerpc64le, x86 (i386), loongarch64, s390x | emulated (qemu-user) | `zig version` 0.16.0; compiles `hello.zig` and its std imports to assembly (600,000-750,000 lines); linking not run (see below) |
-| FreeBSD x86_64 and aarch64, NetBSD x86_64, OpenBSD x86_64 and aarch64 | not run from this container (see below) | |
+| FreeBSD 15.1 amd64, OpenBSD 7.9 amd64 | KVM virtual machine, 1 GB of memory | compiles `hello.zig`, which exits 145 |
+| FreeBSD 15.1 arm64, OpenBSD 7.9 arm64 | emulated virtual machine (QEMU, no KVM), 1 GB of memory | compiles `hello.zig`, which exits 145 |
+| NetBSD 11.0 amd64 | KVM virtual machine, 2 GB of memory (see below) | compiles `hello.zig`, which exits 145 |
 
 The installed `zig` is byte-identical to the official release's on every
 system checked (Linux, both macOS builds, Windows), and so is every one of the
@@ -59,10 +61,10 @@ by running itself again as LLD, and qemu-user (without binfmt_misc
 registration) cannot start that foreign child process. Zig's in-process linker
 (`-fno-lld`) covers aarch64 and riscv64 but not the other five CPUs. The two
 32-bit builds also need `-j1` under qemu on this 128-CPU host; with one thread
-per CPU they run out of address space. The BSD rows were not run from this
-container because the test VMs have 1 GB of memory. The same dispatcher and
-runtimes run on those systems in the BSD VM tests (P9) and in the Rust example
-below.
+per CPU they run out of address space. The NetBSD test VM boots the official live
+image, whose `/tmp` is a memory-backed tmpfs holding the copied-in container;
+with the suite's usual 1 GB of memory, installing `zig` and `lib/` there ran
+out of space, so that row ran with 2 GB.
 
 ## Rust: the compiler's output as one file
 
@@ -86,7 +88,7 @@ examples/build-rust-container ./rust-hello \
 ```
 
 Linux s390x and OpenBSD are left out: Rust ships no prebuilt standard library
-for them (tier 3). Result: a 13-slot universal binary of **1,848,998 bytes**.
+for them (tier 3). Result: a 13-slot universal binary of **1,871,827 bytes**.
 The program prints 12*12 + 1:
 
 | System | How it ran | Output |
@@ -99,6 +101,7 @@ The program prints 12*12 + 1:
 | FreeBSD 15.1 amd64 | KVM virtual machine (`sh rust-hello` and `./rust-hello`) | `145` |
 | FreeBSD 15.1 arm64 | emulated virtual machine (QEMU, no KVM) | `145` |
 | NetBSD 11.0 amd64 | KVM virtual machine | `145` |
+| OpenBSD 7.9 amd64 and arm64 | KVM / emulated virtual machine | `no payload for OpenBSD-amd64` (or `-arm64`), exit 127: there is no OpenBSD slot |
 
 ## Running a universal container
 
