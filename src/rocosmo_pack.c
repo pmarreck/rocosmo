@@ -56,7 +56,12 @@ static void usage(FILE *f) {
 		"  --windows-launcher      store the Windows image compressed behind a small\n"
 		"                          launcher instead of uncompressed at the front; off by\n"
 		"                          default (needs --windows-x86_64 and the zstd layout)\n"
+		"  --data FILE             a tar of files stored once and installed beside the\n"
+		"                          payload on first run, for apps that look for data next\n"
+		"                          to their own executable (Zig's lib/); zstd layout only\n"
 		"  --level N               zstd level, 1-22 (default %d)\n"
+		"  --jobs N                threads compressing zstd frames, 1-1024 (default:\n"
+		"                          one per CPU, up to 8); the output is the same for any N\n"
 		"  --app-id ID             cache namespace, lowercase reverse-DNS (org.example.tool);\n"
 		"                          default: the id the payloads embed as\n"
 		"                          ROCOSMO_APP_ID=<id>; else local.<output name>\n"
@@ -105,11 +110,13 @@ static int write_out(const char *path, const uint8_t *data, size_t len) {
 int main(int argc, char **argv) {
 	const char *pe_path = NULL, *out_path = NULL;
 	const char *app_id_opt = NULL;
+	const char *data_path = NULL;
 	/* Known targets carry a name (zstd-capable); --payload entries only a pattern. */
 	const char *names[MAX_PAYLOADS], *patterns[MAX_PAYLOADS], *paths[MAX_PAYLOADS];
 	size_t pattern_lens[MAX_PAYLOADS];
 	size_t count = 0;
 	int stdin_uses = 0, custom = 0, verbose = 0, launcher = 0, level = DEFAULT_LEVEL;
+	size_t jobs = 0; /* 0: the library picks one per CPU */
 	enum layout layout = LAYOUT_AUTO;
 
 	for (int i = 1; i < argc; i++) {
@@ -129,11 +136,19 @@ int main(int argc, char **argv) {
 			continue;
 		}
 		if (!strcmp(a, "--app-id")) { app_id_opt = v; continue; }
+		if (!strcmp(a, "--data")) { data_path = v; goto check_stdin; }
 		if (!strcmp(a, "--level")) {
 			char *end;
 			long l = strtol(v, &end, 10);
 			if (*v == 0 || *end || l < 1 || l > 22) { fprintf(stderr, "rocosmo-pack: --level must be 1-22\n"); return 2; }
 			level = (int)l;
+			continue;
+		}
+		if (!strcmp(a, "--jobs")) {
+			char *end;
+			long j = strtol(v, &end, 10);
+			if (*v == 0 || *end || j < 1 || j > 1024) { fprintf(stderr, "rocosmo-pack: --jobs must be 1-1024\n"); return 2; }
+			jobs = (size_t)j;
 			continue;
 		}
 		if (!strcmp(a, "--windows-x86_64")) { pe_path = v; goto check_stdin; }
@@ -174,7 +189,9 @@ int main(int argc, char **argv) {
 	if (!out_path || (!pe_path && count == 0)) { usage(stderr); return 2; }
 	if (stdin_uses > 1) { fprintf(stderr, "rocosmo-pack: only one input may come from stdin\n"); return 2; }
 	if (custom && layout == LAYOUT_ZSTD) { fprintf(stderr, "rocosmo-pack: --payload needs --layout raw (zstd targets need a known OS/CPU)\n"); return 2; }
+	if (data_path && (custom || layout == LAYOUT_RAW)) { fprintf(stderr, "rocosmo-pack: --data needs the zstd layout (the runtime installs it)\n"); return 2; }
 	if (custom) layout = LAYOUT_RAW;
+	if (data_path) layout = LAYOUT_ZSTD;
 	if (launcher) {
 		if (!pe_path) { fprintf(stderr, "rocosmo-pack: --windows-launcher needs --windows-x86_64 FILE (the app's Windows executable)\n"); return 2; }
 		if (custom || layout == LAYOUT_RAW) { fprintf(stderr, "rocosmo-pack: --windows-launcher needs the zstd layout (it compresses the Windows image)\n"); return 2; }
@@ -184,6 +201,9 @@ int main(int argc, char **argv) {
 	uint8_t *pe = NULL;
 	size_t pe_len = 0;
 	if (pe_path && read_all(pe_path, &pe, &pe_len)) { perror(pe_path); return 1; }
+	uint8_t *data = NULL;
+	size_t data_len = 0;
+	if (data_path && read_all(data_path, &data, &data_len)) { perror(data_path); return 1; }
 	rocosmo_payload payloads[MAX_PAYLOADS];
 	rocosmo_target targets[MAX_PAYLOADS];
 	for (size_t k = 0; k < count; k++) {
@@ -216,7 +236,7 @@ int main(int argc, char **argv) {
 	if (launcher) {
 		/* The app's Windows PE is given separately (pe) and stored compressed;
 		 * the embedded launcher goes at the front. */
-		if ((st = rocosmo_pack_zstd_launcher(pe, pe_len, targets, count, level, id, id_len, &zst, &zst_len))) {
+		if ((st = rocosmo_pack_zstd_launcher(pe, pe_len, targets, count, level, jobs, data, data_len, id, id_len, &zst, &zst_len))) {
 			fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
 			return 1;
 		}
@@ -225,7 +245,7 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
 			return 1;
 		}
-		if (layout != LAYOUT_RAW && (st = rocosmo_pack_zstd(pe, pe_len, targets, count, level, id, id_len, &zst, &zst_len))) {
+		if (layout != LAYOUT_RAW && (st = rocosmo_pack_zstd(pe, pe_len, targets, count, level, jobs, data, data_len, id, id_len, &zst, &zst_len))) {
 			fprintf(stderr, "rocosmo-pack: %s\n", rocosmo_status_message(st));
 			return 1;
 		}

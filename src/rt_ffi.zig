@@ -38,7 +38,7 @@ pub const Plan = extern struct {
 	ref_content_len: u64,
 };
 
-pub const Status = enum(c_int) { ok = 0, bad_index = 1, no_such_target = 2, corrupt = 3, size_mismatch = 4, out_of_memory = 5, invalid_argument = 6 };
+pub const Status = enum(c_int) { ok = 0, bad_index = 1, no_such_target = 2, corrupt = 3, size_mismatch = 4, out_of_memory = 5, invalid_argument = 6, bad_tree = 7 };
 
 /// Validate the whole index before trusting any offset in it, then report the
 /// byte ranges needed to rebuild `name` (target and, for a delta, its reference).
@@ -74,6 +74,34 @@ pub export fn rocosmo_rt_decode(frame: ?[*]const u8, frame_len: usize, ref: ?[*]
 	return .ok;
 }
 
+/// Walk state for an encoded data tree (datatree.zig), kept by the caller
+/// between calls so the walk needs no allocation.
+pub const TreeIter = extern struct { pos: u64 = 0, prev_off: u64 = 0, prev_len: u32 = 0, left: u32 = 0, started: u32 = 0 };
+pub const TreeEntry = extern struct { path: [*]const u8, path_len: usize, bytes: [*]const u8, bytes_len: usize, exec: u32 };
+
+/// Next entry of the data tree `tree`: sets *has to 1 and fills *out, or to 0
+/// at the end. Every entry is validated first (bounds, flags, a confined and
+/// portable path, sorted order), so the caller may join the path under its
+/// install directory as is.
+pub export fn rocosmo_rt_tree_next(tree: ?[*]const u8, tree_len: usize, it: ?*TreeIter, out: ?*TreeEntry, has: ?*c_int) callconv(.c) Status {
+	const tp = tree orelse return .invalid_argument;
+	const st = it orelse return .invalid_argument;
+	const o = out orelse return .invalid_argument;
+	const h = has orelse return .invalid_argument;
+	const bytes = tp[0..tree_len];
+	var walk = if (st.started == 0) (datatree.Iterator.init(bytes) catch return .bad_tree) else datatree.Iterator{ .bytes = bytes, .pos = @intCast(st.pos), .left = st.left, .prev = if (st.prev_len == 0) null else bytes[@intCast(st.prev_off)..][0..st.prev_len] };
+	const e = (walk.next() catch return .bad_tree) orelse {
+		h.* = 0;
+		return .ok;
+	};
+	st.* = .{ .pos = walk.pos, .prev_off = @intFromPtr(e.path.ptr) - @intFromPtr(bytes.ptr), .prev_len = @intCast(e.path.len), .left = walk.left, .started = 1 };
+	o.* = .{ .path = e.path.ptr, .path_len = e.path.len, .bytes = e.bytes.ptr, .bytes_len = e.bytes.len, .exec = @intFromBool(e.exec) };
+	h.* = 1;
+	return .ok;
+}
+
+const datatree = @import("datatree.zig");
+
 export fn rocosmo_rt_status_message(status: c_int) callconv(.c) [*:0]const u8 {
 	return switch (status) {
 		0 => "ok",
@@ -82,6 +110,7 @@ export fn rocosmo_rt_status_message(status: c_int) callconv(.c) [*:0]const u8 {
 		3 => "payload data is corrupt or the reference does not match",
 		4 => "payload size does not match the index",
 		5 => "out of memory",
+		7 => "data tree is malformed or has an unsafe path",
 		else => "invalid argument",
 	};
 }
@@ -137,4 +166,38 @@ test "runtime C API rebuilds each target of a packed container" {
 	try testing.expectEqual(Status.no_such_target, rocosmo_rt_plan_target(out[x..].ptr, y, out.len, "plan9-mips", 10, &p));
 	try testing.expectEqual(Status.bad_index, rocosmo_rt_plan_target(out[x..].ptr, y - 1, out.len, "linux-x86_64", 12, &p));
 	try testing.expectEqual(Status.bad_index, rocosmo_rt_plan_target(out[x..].ptr, y, x, "linux-x86_64", 12, &p)); // container too short
+}
+
+test "the data tree walk through the C ABI yields every entry, then stops; damage is refused" {
+	const gpa = testing.allocator;
+	const tree = try datatree.encode(gpa, &.{
+		.{ .path = "lib/a", .bytes = "one" },
+		.{ .path = "lib/b/x", .exec = true, .bytes = "two" },
+	});
+	defer gpa.free(tree);
+	var it: TreeIter = .{};
+	var e: TreeEntry = undefined;
+	var has: c_int = 0;
+	try testing.expectEqual(Status.ok, rocosmo_rt_tree_next(tree.ptr, tree.len, &it, &e, &has));
+	try testing.expectEqual(@as(c_int, 1), has);
+	try testing.expectEqualStrings("lib/a", e.path[0..e.path_len]);
+	try testing.expectEqualStrings("one", e.bytes[0..e.bytes_len]);
+	try testing.expectEqual(@as(u32, 0), e.exec);
+	try testing.expectEqual(Status.ok, rocosmo_rt_tree_next(tree.ptr, tree.len, &it, &e, &has));
+	try testing.expectEqualStrings("lib/b/x", e.path[0..e.path_len]);
+	try testing.expectEqual(@as(u32, 1), e.exec);
+	try testing.expectEqual(Status.ok, rocosmo_rt_tree_next(tree.ptr, tree.len, &it, &e, &has));
+	try testing.expectEqual(@as(c_int, 0), has);
+	// A traversal path written into the bytes is refused by the walk.
+	const bad = try gpa.dupe(u8, tree);
+	defer gpa.free(bad);
+	@memcpy(bad[8 + 4 + 2 ..][0..5], "../aa");
+	var it2: TreeIter = .{};
+	try testing.expectEqual(Status.bad_tree, rocosmo_rt_tree_next(bad.ptr, bad.len, &it2, &e, &has));
+	// A tree cut short fails when the walk reaches the missing bytes.
+	var it3: TreeIter = .{};
+	var st: Status = .ok;
+	has = 1;
+	while (st == .ok and has == 1) st = rocosmo_rt_tree_next(tree.ptr, tree.len - 1, &it3, &e, &has);
+	try testing.expectEqual(Status.bad_tree, st);
 }

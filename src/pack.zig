@@ -37,7 +37,7 @@ pub const Target = struct {
 	runtime_gz: []const u8,
 };
 
-pub const PackError = error{ NotPe, UnsupportedPe, HeadersOverflow, InvalidPattern, InvalidName, InvalidAppId, TooManyTargets, EncodeFailed, OutOfMemory };
+pub const PackError = error{ NotPe, UnsupportedPe, HeadersOverflow, InvalidPattern, InvalidName, InvalidAppId, InvalidData, InvalidJobs, TooManyTargets, EncodeFailed, OutOfMemory };
 
 /// Patterns become literal shell `case` alternatives, so only a conservative
 /// alphabet is allowed: no globbing, quoting, whitespace or command syntax.
@@ -71,6 +71,8 @@ pub const Desc = struct {
 	const off_target = desc.off_target;
 	const off_hash = desc.off_hash;
 	const off_app_id = desc.off_app_id;
+	const off_flags = desc.off_flags;
+	const flag_data = desc.flag_data;
 	pub const size = desc.size;
 };
 
@@ -120,18 +122,22 @@ const case_start = "case $(uname -s)-$(uname -m) in\n";
 const case_end =
 	"*) echo \"$0: no payload for $(uname -s)-$(uname -m)\" >&2;exit 127;;\n" ++
 	"esac\n";
-/// Payloads live in $c/<app id>/<hash>; $d is this app's folder.
-const cache_dir =
-	"d=$c/$a f=$c/$a/$i\n" ++
-	"if [ ! -x \"$f\" ];then\n" ++
-	// Unwritable cache home: use a private per-user TMPDIR directory, verified
-	// (not a symlink, owned by us) before anything in it is trusted or run.
-	"if ! mkdir -p \"$d\" 2>/dev/null;then\n" ++
-	"c=${TMPDIR:-/tmp}/rocosmo-$(id -u);d=$c/$a f=$c/$a/$i\n" ++
-	"mkdir -m 700 \"$c\" 2>/dev/null\n" ++
-	"[ -d \"$c\" ]&&[ ! -L \"$c\" ]&&[ -O \"$c\" ]&&mkdir -p \"$d\"||{ echo \"$0: no private writable cache directory\" >&2;exit 126;}\n" ++
-	"fi\n" ++
-	"fi\n";
+/// Payloads live in $c/<app id>/<hash>; $d is this app's folder. With a data
+/// tree the payload is $c/<app id>/<hash>/$w instead (cacheDirFor's `file`).
+fn cacheDirFor(comptime file: []const u8) []const u8 {
+	return "d=$c/$a f=" ++ file ++ "\n" ++
+		"if [ ! -x \"$f\" ];then\n" ++
+		// Unwritable cache home: use a private per-user TMPDIR directory, verified
+		// (not a symlink, owned by us) before anything in it is trusted or run.
+		"if ! mkdir -p \"$d\" 2>/dev/null;then\n" ++
+		"c=${TMPDIR:-/tmp}/rocosmo-$(id -u);d=$c/$a f=" ++ file ++ "\n" ++
+		"mkdir -m 700 \"$c\" 2>/dev/null\n" ++
+		"[ -d \"$c\" ]&&[ ! -L \"$c\" ]&&[ -O \"$c\" ]&&mkdir -p \"$d\"||{ echo \"$0: no private writable cache directory\" >&2;exit 126;}\n" ++
+		"fi\n" ++
+		"fi\n";
+}
+const cache_dir = cacheDirFor("$c/$a/$i");
+const cache_dir_data = cacheDirFor("$c/$a/$i/$w");
 // BSD dd treats count=0 as "until EOF", so never call dd with a zero count.
 // Copies bytes [o, o+n) of the container to stdout.
 const dd_range = "{ { [ $b = 0 ]||dd if=\"$s\" bs=4096 skip=$((o/4096)) count=$b;}&&{ [ $r = 0 ]||dd if=\"$s\" bs=1 skip=$((o+b*4096)) count=$r;};} 2>/dev/null";
@@ -160,12 +166,27 @@ const script_tail = case_end ++ cache_dir ++
 /// The zstd layout embeds Zstandard decoder runtimes; this comment points
 /// recipients at its BSD license (the full text ships in THIRD_PARTY_NOTICES.md).
 const zstd_license_line = "# Contains Zstandard (BSD license): https://github.com/facebook/zstd/blob/dev/LICENSE\n";
-const script_tail_zstd = case_end ++ zstd_license_line ++ cache_dir ++
+const rt_fn =
 	"rt(){ g=$c/runtime/$h\n" ++
 	"[ -x \"$g\" ]&&return\n" ++
 	"mkdir -p \"$c/runtime\";u=$g.$$ b=$((n/4096)) r=$((n%4096))\n" ++
 	dd_range ++ "|gzip -dc >\"$u\"&&chmod 755 \"$u\"&&mv -f \"$u\" \"$g\"||{ rm -f \"$u\";echo \"$0: cannot unpack runtime\" >&2;exit 126;}\n" ++
-	"}\n" ++
+	"}\n";
+/// Data-tree layout (--data): the runtime installs the payload as $w together
+/// with the shared tree into a directory named by a hash of both, built under
+/// a temporary name ($i.<pid>, which cleanup skips) and renamed into place, so
+/// an app that looks beside its own executable (Zig's lib/) finds the tree.
+/// It always runs from that directory: the memory path does not apply.
+/// Cleanup also removes other versions' directories; a different version of
+/// the same app still running from one at that moment would lose its files.
+const cleanup_data = "for e in \"$d\"/*;do case ${e##*/} in $i|*.*);;*)rm -rf \"$e\";;esac;done\n";
+const script_tail_zstd_data = case_end ++ zstd_license_line ++ cache_dir_data ++ rt_fn ++
+	"k(){ " ++ cleanup_data ++ "}\n" ++
+	"z(){ rt;t=$d/$i.$$\n" ++
+	"\"$g\" --install \"$s\" $x $y $p \"$t\" \"$d/$i\" $w;q=$?;rm -rf \"$t\";[ $q = 0 ]||exit 126\n" ++
+	"k;}\n" ++
+	exec_tail;
+const script_tail_zstd = case_end ++ zstd_license_line ++ cache_dir ++ rt_fn ++
 	"k(){ " ++ cleanup ++ "}\n" ++
 	"z(){ rt;t=$f.$$\n" ++
 	"\"$g\" \"$s\" $x $y $p \"$t\"&&chmod 755 \"$t\"&&mv -f \"$t\" \"$f\"||{ rm -f \"$t\";exit 126;}\n" ++
@@ -177,6 +198,25 @@ fn shortHash(bytes: []const u8) [16]u8 {
 	var digest: [32]u8 = undefined;
 	std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
 	return std.fmt.bytesToHex(digest[0..8], .lower);
+}
+
+/// Cache identity of an installed payload: its own hash, or with a data tree
+/// a hash of both, so a changed tree installs into a new directory.
+fn identity(bytes: []const u8, data: ?[]const u8) [16]u8 {
+	const d = data orelse return shortHash(bytes);
+	var h = std.crypto.hash.sha2.Sha256.init(.{});
+	h.update(bytes);
+	h.update("\x00rocosmo-data\x00");
+	h.update(d);
+	var digest: [32]u8 = undefined;
+	h.final(&digest);
+	return std.fmt.bytesToHex(digest[0..8], .lower);
+}
+
+/// The installed executable's file name with a data tree: the app id's last
+/// label (dev.rocosmo.zig -> zig), already validated as [a-z0-9-].
+fn exeName(id: []const u8) []const u8 {
+	return id[(std.mem.lastIndexOfScalar(u8, id, '.') orelse return id) + 1 ..];
 }
 
 /// Trampoline prefix, cache-home logic, the app id (validated: safe as shell
@@ -248,16 +288,24 @@ fn writeScript(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format,
 	try list.appendSlice(gpa, script_tail);
 }
 
-fn writeScriptZstd(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format, id: []const u8, targets: []const Target, rt_offsets: []const usize, idx_off: usize, idx_len: usize) !void {
+fn writeScriptZstd(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: Format, id: []const u8, targets: []const Target, rt_offsets: []const usize, idx_off: usize, idx_len: usize, data: ?[]const u8) !void {
 	try writeStart(list, gpa, format, id);
 	try appendPadded(list, gpa, "x=", idx_off);
 	try appendPadded(list, gpa, " y=", idx_len);
 	try list.append(gpa, '\n');
+	if (data != null) {
+		try list.appendSlice(gpa, "w=");
+		try list.appendSlice(gpa, exeName(id));
+		try list.append(gpa, '\n');
+	}
 	try list.appendSlice(gpa, case_start);
 	for (targets, rt_offsets) |t, off| {
+		// The launcher's Windows entry is rebuilt by the launcher, never by
+		// the shell, and no POSIX `uname -s` is "Windows": no case line.
+		if (std.mem.startsWith(u8, t.pattern, "Windows-")) continue;
 		try list.appendSlice(gpa, t.pattern);
 		try list.appendSlice(gpa, ") i=");
-		try list.appendSlice(gpa, &shortHash(t.bytes));
+		try list.appendSlice(gpa, &identity(t.bytes, data));
 		try list.appendSlice(gpa, " h=");
 		try list.appendSlice(gpa, &shortHash(t.runtime_gz));
 		try appendPadded(list, gpa, " o=", off);
@@ -266,7 +314,7 @@ fn writeScriptZstd(list: *std.ArrayList(u8), gpa: std.mem.Allocator, format: For
 		try list.appendSlice(gpa, t.name);
 		try list.appendSlice(gpa, ";;\n");
 	}
-	try list.appendSlice(gpa, script_tail_zstd);
+	try list.appendSlice(gpa, if (data != null) script_tail_zstd_data else script_tail_zstd);
 }
 
 fn appendPadded(list: *std.ArrayList(u8), gpa: std.mem.Allocator, label: []const u8, v: usize) !void {
@@ -420,7 +468,35 @@ pub fn pack(gpa: std.mem.Allocator, pe: ?[]const u8, payloads: []const Payload, 
 /// shell copies with dd, are 4 KiB aligned. `pe` null selects the POSIX-only
 /// format: no PE, and index entry 0 (the PE body) is empty and never referenced.
 pub fn packZstd(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target, level: i32, id: []const u8) PackError![]u8 {
-	return packZstdImpl(gpa, pe, targets, level, id, null);
+	return packZstdImpl(gpa, pe, targets, level, id, null, null, 1);
+}
+
+/// Index entry name of the data tree (--data), shared by all targets.
+pub const data_entry_name = desc.data_entry;
+
+pub const Extra = struct {
+	/// Launcher layout: the target whose bytes are the app's Windows executable.
+	win_name: ?[]const u8 = null,
+	/// An encoded data tree (datatree.zig) installed beside the payload.
+	data: ?[]const u8 = null,
+	/// Worker threads compressing frames; the output is the same for any count.
+	jobs: usize = 1,
+};
+
+/// packZstd or packZstdLauncher (with `win_name`), optionally with a data
+/// tree, which must be a valid encoded tree (datatree.zig).
+pub fn packZstdWith(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target, level: i32, id: []const u8, extra: Extra) PackError![]u8 {
+	if (extra.jobs == 0) return error.InvalidJobs;
+	if (extra.data) |d| {
+		var it = datatree.Iterator.init(d) catch return error.InvalidData;
+		while (it.next() catch return error.InvalidData) |_| {}
+	}
+	if (extra.win_name) |w| {
+		var found = false;
+		for (targets) |t| found = found or std.mem.eql(u8, t.name, w);
+		if (!found or pe == null) return error.InvalidName;
+	}
+	return packZstdImpl(gpa, pe, targets, level, id, extra.win_name, extra.data, extra.jobs);
 }
 
 /// `--windows-launcher` variant: the front PE is a small launcher (not the
@@ -435,10 +511,10 @@ pub fn packZstdLauncher(gpa: std.mem.Allocator, launcher: []const u8, targets: [
 		found = true;
 	};
 	if (!found) return error.InvalidName;
-	return packZstdImpl(gpa, launcher, targets, level, id, win_name);
+	return packZstdImpl(gpa, launcher, targets, level, id, win_name, null, 1);
 }
 
-fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target, level: i32, id: []const u8, win_name: ?[]const u8) PackError![]u8 {
+fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target, level: i32, id: []const u8, win_name: ?[]const u8, data: ?[]const u8, jobs: usize) PackError![]u8 {
 	const info: ?PeInfo = if (pe) |p| try parsePe(p) else null;
 	const format: Format = if (pe == null) .posix else .universal;
 	const is_launcher = win_name != null;
@@ -453,11 +529,12 @@ fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 	const body: []const u8 = if (pe != null and !is_launcher) pe.?[info.?.soh..] else &.{};
 	const pe_ref_usable = pe != null and !is_launcher;
 
-	// Candidate frames: whole[t], and delta[r * n + t] with r == n meaning the PE body.
-	const whole = try gpa.alloc([]u8, n);
-	var whole_done: usize = 0;
+	// Candidate frames: whole[t], and delta[r * n + t] with r == n meaning the
+	// PE body. The data tree is one whole frame shared by every target (no deltas).
+	const whole = try gpa.alloc(?[]u8, n);
+	@memset(whole, null);
 	defer {
-		for (whole[0..whole_done]) |f| gpa.free(f);
+		for (whole) |w| if (w) |f| gpa.free(f);
 		gpa.free(whole);
 	}
 	const delta = try gpa.alloc(?[]u8, (n + 1) * n);
@@ -466,18 +543,23 @@ fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 		for (delta) |d| if (d) |f| gpa.free(f);
 		gpa.free(delta);
 	}
+	var data_frame: ?[]u8 = null;
+	defer if (data_frame) |f| gpa.free(f);
+	var work: std.ArrayList(EncodeJob) = .empty;
+	defer work.deinit(gpa);
 	for (targets, 0..) |t, ti| {
-		whole[ti] = zenc.encode(gpa, t.bytes, null, level) catch |e| return mapEnc(e);
-		whole_done += 1;
+		try work.append(gpa, .{ .src = t.bytes, .ref = null, .out = &whole[ti] });
 		for (0..n + 1) |r| {
 			const ref: []const u8 = if (r == n) body else targets[r].bytes;
 			const usable = if (r == n) pe_ref_usable and t.arch == .x86_64 else (r != ti and targets[r].arch == t.arch);
-			if (usable) delta[r * n + ti] = zenc.encode(gpa, t.bytes, ref, level) catch |e| return mapEnc(e);
+			if (usable) try work.append(gpa, .{ .src = t.bytes, .ref = ref, .out = &delta[r * n + ti] });
 		}
 	}
+	if (data) |d| try work.append(gpa, .{ .src = d, .ref = null, .out = &data_frame });
+	try encodeAll(gpa, work.items, level, jobs);
 	const alone = try gpa.alloc(u64, n);
 	defer gpa.free(alone);
-	for (alone, whole) |*a, f| a.* = f.len;
+	for (alone, whole) |*a, f| a.* = f.?.len;
 	const costs = try gpa.alloc(?u64, (n + 1) * n);
 	defer gpa.free(costs);
 	for (costs, delta) |*c, d| c.* = if (d) |f| f.len else null;
@@ -488,14 +570,16 @@ fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 	const chosen = try gpa.alloc([]const u8, n);
 	defer gpa.free(chosen);
 	for (chosen, plan.choice, 0..) |*c, ch, ti| c.* = switch (ch) {
-		.root => whole[ti],
+		.root => whole[ti].?,
 		.delta => |r| delta[r * n + ti].?,
 	};
 
 	// Sizes first: the index and script have fixed widths for given names.
-	const entries = try gpa.alloc(index.Entry, n + 1);
+	const n_entries = n + 1 + @intFromBool(data != null);
+	const entries = try gpa.alloc(index.Entry, n_entries);
 	defer gpa.free(entries);
-	fillEntries(entries, targets, plan.choice, chosen, body.len, 0, 0, &.{});
+	fillEntries(entries[0 .. n + 1], targets, plan.choice, chosen, body.len, 0, 0, &.{});
+	if (data_frame) |f| entries[n + 1] = .{ .name = data_entry_name, .kind = .frame, .offset = 0, .stored_len = f.len, .content_len = data.?.len };
 	const idx_probe = index.encode(gpa, entries) catch |e| return mapIdx(e);
 	const idx_len = idx_probe.len;
 	gpa.free(idx_probe);
@@ -504,7 +588,7 @@ fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 	@memset(rt_offsets, 0);
 	var probe: std.ArrayList(u8) = .empty;
 	defer probe.deinit(gpa);
-	try writeScriptZstd(&probe, gpa, format, id, targets, rt_offsets, 0, idx_len);
+	try writeScriptZstd(&probe, gpa, format, id, targets, rt_offsets, 0, idx_len, data);
 	const h = try headerLayout(info, if (pe) |p| p.len else 0, probe.items.len);
 
 	// Only the runtime blobs are aligned: the shell copies them with 4 KiB dd
@@ -522,15 +606,18 @@ fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 		off.* = cursor;
 		cursor += f.len;
 	}
+	const data_off = cursor;
+	if (data_frame) |f| cursor += f.len;
 	const total = cursor;
 
-	fillEntries(entries, targets, plan.choice, chosen, body.len, h.soh, 1, frame_offsets);
+	fillEntries(entries[0 .. n + 1], targets, plan.choice, chosen, body.len, h.soh, 1, frame_offsets);
+	if (data_frame != null) entries[n + 1].offset = data_off;
 	const idx = index.encode(gpa, entries) catch |e| return mapIdx(e);
 	defer gpa.free(idx);
 	std.debug.assert(idx.len == idx_len);
 	var script: std.ArrayList(u8) = .empty;
 	defer script.deinit(gpa);
-	try writeScriptZstd(&script, gpa, format, id, targets, rt_offsets, idx_off, idx_len);
+	try writeScriptZstd(&script, gpa, format, id, targets, rt_offsets, idx_off, idx_len, data);
 	std.debug.assert(script.items.len == probe.items.len);
 
 	const out = try gpa.alloc(u8, total);
@@ -540,9 +627,10 @@ fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 	for (targets, rt_offsets) |t, off| @memcpy(out[off..][0..t.runtime_gz.len], t.runtime_gz);
 	@memcpy(out[idx_off..][0..idx_len], idx);
 	for (chosen, frame_offsets) |f, off| @memcpy(out[off..][0..f.len], f);
+	if (data_frame) |f| @memcpy(out[data_off..][0..f.len], f);
 	if (win_name) |name| {
 		for (targets) |t| if (std.mem.eql(u8, t.name, name)) {
-			try patchDescriptor(out, idx_off, idx_len, name, &shortHash(t.bytes), id);
+			try patchDescriptor(out, idx_off, idx_len, name, &identity(t.bytes, data), id, data != null);
 		};
 	}
 	return out;
@@ -551,7 +639,7 @@ fn packZstdImpl(gpa: std.mem.Allocator, pe: ?[]const u8, targets: []const Target
 /// Fill the launcher's descriptor in the finished container: find its magic in
 /// the (verbatim) launcher body and write the index location plus the app
 /// entry's name, cache hash and app id, so the launcher can rebuild it.
-fn patchDescriptor(out: []u8, idx_off: usize, idx_len: usize, name: []const u8, hash: []const u8, id: []const u8) PackError!void {
+fn patchDescriptor(out: []u8, idx_off: usize, idx_len: usize, name: []const u8, hash: []const u8, id: []const u8, has_data: bool) PackError!void {
 	const at = std.mem.indexOf(u8, out, &launcher_magic) orelse return error.UnsupportedPe;
 	if (name.len > desc_name_max or id.len > desc_id_max or hash.len != 16) return error.InvalidName;
 	const d = out[at..][0..Desc.size];
@@ -562,6 +650,7 @@ fn patchDescriptor(out: []u8, idx_off: usize, idx_len: usize, name: []const u8, 
 	@memcpy(d[Desc.off_hash..][0..16], hash);
 	@memset(d[Desc.off_app_id..][0..desc_id_max], 0);
 	@memcpy(d[Desc.off_app_id..][0..id.len], id);
+	d[Desc.off_flags] = if (has_data) Desc.flag_data else 0;
 }
 
 /// Index entry 0 is the PE body (raw, a free reference); entry t+1 is target t.
@@ -584,6 +673,52 @@ fn fillEntries(entries: []index.Entry, targets: []const Target, choice: []const 
 		};
 	}
 }
+
+/// One zstd frame to compress: `src`, as a delta against `ref` if given.
+const EncodeJob = struct { src: []const u8, ref: ?[]const u8, out: *?[]u8 };
+
+/// Compress every job, on `jobs` worker threads (work-queue parallelism over
+/// an atomic job counter). Each frame is encoded independently into its own
+/// slot, so the frames, and the container, are the same for any worker count.
+/// On failure, finished frames stay in their slots for the caller to free.
+fn encodeAll(gpa: std.mem.Allocator, work: []const EncodeJob, level: i32, jobs: usize) PackError!void {
+	var q: EncodeQueue = .{ .gpa = gpa, .work = work, .level = level };
+	const extra = @min(jobs, work.len) -| 1;
+	const threads = try gpa.alloc(std.Thread, extra);
+	defer gpa.free(threads);
+	var started: usize = 0;
+	defer for (threads[0..started]) |t| t.join();
+	for (threads) |*t| {
+		t.* = std.Thread.spawn(.{}, EncodeQueue.run, .{&q}) catch break;
+		started += 1;
+	}
+	q.run();
+	for (threads[0..started]) |t| t.join();
+	started = 0;
+	if (q.failed.load(.acquire)) return q.err;
+}
+
+const EncodeQueue = struct {
+	gpa: std.mem.Allocator,
+	work: []const EncodeJob,
+	level: i32,
+	next: std.atomic.Value(usize) = .init(0),
+	failed: std.atomic.Value(bool) = .init(false),
+	/// Written only by the worker that first sets `failed`; read after join.
+	err: PackError = error.EncodeFailed,
+
+	fn run(q: *EncodeQueue) void {
+		while (!q.failed.load(.acquire)) {
+			const i = q.next.fetchAdd(1, .monotonic);
+			if (i >= q.work.len) return;
+			const j = q.work[i];
+			j.out.* = zenc.encode(q.gpa, j.src, j.ref, q.level) catch |e| {
+				if (q.failed.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) q.err = mapEnc(e);
+				return;
+			};
+		}
+	}
+};
 
 fn mapEnc(e: anyerror) PackError {
 	return if (e == error.OutOfMemory) error.OutOfMemory else error.EncodeFailed;
@@ -1195,4 +1330,191 @@ test "zstd containers name Zstandard's license in the script; raw containers do 
 		defer gpa.free(raw);
 		try testing.expect(std.mem.indexOf(u8, raw, "zstd") == null);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Data trees (--data): one shared directory installed beside the payload.
+
+const datatree = @import("datatree.zig");
+const targets_table = @import("targets.zig");
+
+/// fakePe with `nsec` sections (first at RVA 0x1000), for header-budget tests.
+fn fakePeSections(gpa: std.mem.Allocator, nsec: u16) ![]u8 {
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const file_align = 0x200;
+	const size_of_headers = 0x400;
+	var buf = try gpa.alloc(u8, size_of_headers + nsec * file_align);
+	@memset(buf, 0);
+	@memcpy(buf[0..size_of_headers], pe[0..size_of_headers]);
+	const coff = 0x80 + 4;
+	std.mem.writeInt(u16, buf[coff + 2 ..][0..2], nsec, .little);
+	const sec = coff + 20 + 240;
+	for (0..nsec) |i| {
+		const h = sec + 40 * i;
+		@memset(buf[h..][0..40], 0);
+		@memcpy(buf[h..][0..5], ".sect");
+		std.mem.writeInt(u32, buf[h + 8 ..][0..4], file_align, .little);
+		std.mem.writeInt(u32, buf[h + 12 ..][0..4], @intCast(0x1000 * (i + 1)), .little);
+		std.mem.writeInt(u32, buf[h + 16 ..][0..4], file_align, .little);
+		std.mem.writeInt(u32, buf[h + 20 ..][0..4], @intCast(size_of_headers + file_align * i), .little);
+	}
+	return buf;
+}
+
+fn testTree(gpa: std.mem.Allocator) ![]u8 {
+	return datatree.encode(gpa, &.{
+		.{ .path = "lib/a.txt", .bytes = "alpha " ** 64 },
+		.{ .path = "lib/bin/run", .exec = true, .bytes = "#!/bin/sh\n" },
+	});
+}
+
+/// Value of `key=` on the case line for `pattern`.
+fn caseValue(out: []const u8, pattern: []const u8, key: []const u8) ?[]const u8 {
+	const r = scriptRegion(out);
+	var lines = std.mem.splitScalar(u8, out[r.start..r.end], '\n');
+	while (lines.next()) |l| {
+		if (!std.mem.startsWith(u8, l, pattern) or l.len <= pattern.len or (l[pattern.len] != ')' and l[pattern.len] != '|')) continue;
+		var words = std.mem.tokenizeAny(u8, l, " ;)");
+		while (words.next()) |w| if (std.mem.startsWith(u8, w, key) and w.len > key.len and w[key.len] == '=') return w[key.len + 1 ..];
+	}
+	return null;
+}
+
+test "data tree: stored once as an index entry, and part of each target's cache identity" {
+	const gpa = testing.allocator;
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	const tree = try testTree(gpa);
+	defer gpa.free(tree);
+	const with = try packZstdWith(gpa, pe, &ts, 3, test_id, .{ .data = tree });
+	defer gpa.free(with);
+	const without = try packZstd(gpa, pe, &ts, 3, test_id);
+	defer gpa.free(without);
+	const got = try rebuild(gpa, with, data_entry_name);
+	defer gpa.free(got);
+	try testing.expectEqualSlices(u8, tree, got);
+	const entries = try index.decode(gpa, with[scriptGlobal(with, "x").?..][0..scriptGlobal(with, "y").?], with.len);
+	defer gpa.free(entries);
+	var n: usize = 0;
+	for (entries) |e| if (std.mem.eql(u8, e.name, data_entry_name)) {
+		n += 1;
+		try testing.expectEqual(index.Kind.frame, e.kind);
+	};
+	try testing.expectEqual(@as(usize, 1), n);
+	// The payloads still rebuild exactly; a new tree means a new cache entry.
+	for (ts) |t| {
+		const b = try rebuild(gpa, with, t.name);
+		defer gpa.free(b);
+		try testing.expectEqualSlices(u8, t.bytes, b);
+		try testing.expect(!std.mem.eql(u8, caseValue(with, t.pattern, "i").?, caseValue(without, t.pattern, "i").?));
+	}
+	try testing.expectError(error.InvalidData, packZstdWith(gpa, pe, &ts, 3, test_id, .{ .data = "not a tree" }));
+}
+
+test "with a data tree the dispatcher installs a directory and never runs from memory" {
+	const gpa = testing.allocator;
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	const tree = try testTree(gpa);
+	defer gpa.free(tree);
+	const with = try packZstdWith(gpa, pe, &ts, 3, test_id, .{ .data = tree });
+	defer gpa.free(with);
+	const without = try packZstd(gpa, pe, &ts, 3, test_id);
+	defer gpa.free(without);
+	const sw = with[scriptRegion(with).start..scriptRegion(with).end];
+	const so = without[scriptRegion(without).start..scriptRegion(without).end];
+	try testing.expect(std.mem.indexOf(u8, sw, "\nw=test\n") != null); // app id dev.rocosmo.test
+	try testing.expect(std.mem.indexOf(u8, sw, " --install ") != null);
+	try testing.expect(std.mem.indexOf(u8, sw, "--exec") == null);
+	try testing.expect(std.mem.indexOf(u8, so, "--exec") != null);
+	try testing.expect(std.mem.indexOf(u8, so, " --install ") == null);
+}
+
+test "the launcher layout's Windows entry gets no shell case line" {
+	const gpa = testing.allocator;
+	const launcher = try fakeLauncherPe(gpa);
+	defer gpa.free(launcher);
+	const app = try fakePe(gpa);
+	defer gpa.free(app);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = [_]Target{
+		.{ .name = "windows-x86_64", .pattern = "Windows-x86_64", .arch = .x86_64, .bytes = app, .runtime_gz = "" },
+		.{ .name = "linux-x86_64", .pattern = "Linux-x86_64", .arch = .x86_64, .bytes = z.x64, .runtime_gz = "rt1" },
+	};
+	const out = try packZstdLauncher(gpa, launcher, &ts, 3, test_id, "windows-x86_64");
+	defer gpa.free(out);
+	try testing.expect(caseValue(out, "Windows-x86_64", "i") == null);
+	try testing.expect(caseValue(out, "Linux-x86_64", "i") != null);
+	const got = try rebuild(gpa, out, "windows-x86_64");
+	defer gpa.free(got);
+	try testing.expectEqualSlices(u8, app, got);
+}
+
+test "every known target, the listing and a data tree fit the header area of a 7-section PE and of the launcher" {
+	const gpa = testing.allocator;
+	const tree = try testTree(gpa);
+	defer gpa.free(tree);
+	var ts: [targets_table.known.len + 1]Target = undefined;
+	ts[0] = .{ .name = "windows-x86_64", .pattern = "Windows-x86_64", .arch = .x86_64, .bytes = "w", .runtime_gz = "" };
+	for (targets_table.known, ts[1..]) |k, *t| t.* = .{ .name = k.name, .pattern = k.pattern, .arch = k.arch, .bytes = k.name, .runtime_gz = "r" };
+	const pe7 = try fakePeSections(gpa, 7);
+	defer gpa.free(pe7);
+	const out = try packZstdWith(gpa, pe7, ts[1..], 1, test_id, .{ .data = tree });
+	gpa.free(out);
+	// The launcher (5 sections) fronts a container whose Windows app is an entry.
+	const pe5 = try fakePeSections(gpa, 5);
+	defer gpa.free(pe5);
+	const launcher = try gpa.alloc(u8, pe5.len + Desc.size);
+	defer gpa.free(launcher);
+	@memcpy(launcher[0..pe5.len], pe5);
+	@memcpy(launcher[pe5.len..][0..launcher_magic.len], &launcher_magic);
+	@memset(launcher[pe5.len + launcher_magic.len ..], 0);
+	const out2 = try packZstdWith(gpa, launcher, &ts, 1, test_id, .{ .win_name = "windows-x86_64", .data = tree });
+	gpa.free(out2);
+}
+
+test "parallel frame compression is byte-identical to one worker, for any worker count" {
+	const gpa = testing.allocator;
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	const tree = try testTree(gpa);
+	defer gpa.free(tree);
+	const one = try packZstdWith(gpa, pe, &ts, 3, test_id, .{ .data = tree, .jobs = 1 });
+	defer gpa.free(one);
+	// 2 and 3 split the frames unevenly; 64 is more workers than frames.
+	for ([_]usize{ 2, 3, 64 }) |jobs| {
+		const many = try packZstdWith(gpa, pe, &ts, 3, test_id, .{ .data = tree, .jobs = jobs });
+		defer gpa.free(many);
+		try testing.expectEqualSlices(u8, one, many);
+	}
+	try testing.expectError(error.InvalidJobs, packZstdWith(gpa, pe, &ts, 3, test_id, .{ .jobs = 0 }));
+}
+
+// One worker: FailingAllocator counts allocations without synchronization.
+fn packAllocFail(gpa: std.mem.Allocator, pe: []const u8, ts: []const Target, tree: []const u8) !void {
+	const out = try packZstdWith(gpa, pe, ts, 1, test_id, .{ .data = tree, .jobs = 1 });
+	gpa.free(out);
+}
+
+test "an allocation failure at any point while packing frees every frame already compressed" {
+	const gpa = testing.allocator;
+	const pe = try fakePe(gpa);
+	defer gpa.free(pe);
+	const z = try ZTest.init(gpa);
+	defer z.deinit(gpa);
+	const ts = z.targets();
+	const tree = try testTree(gpa);
+	defer gpa.free(tree);
+	try testing.checkAllAllocationFailures(gpa, packAllocFail, .{ pe, &ts, tree });
 }

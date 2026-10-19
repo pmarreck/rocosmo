@@ -13,4 +13,9 @@ pub const off_index_len = 24; // u64: index length
 pub const off_target = 32; // [name_max] NUL-padded entry name to rebuild
 pub const off_hash = off_target + name_max; // 64: [16] cache hash (hex) of that entry
 pub const off_app_id = off_hash + 16; // 80: [id_max] NUL-padded app id
-pub const size = off_app_id + id_max; // 144
+pub const off_flags = off_app_id + id_max; // 144: u8 flags
+pub const flag_data: u8 = 1; // a data tree (pack.data_entry_name) installs beside the payload
+/// Index entry name of the data tree (rocosmo-pack --data), shared by the
+/// packer, the launcher and (as DATA_ENTRY) runtime.c.
+pub const data_entry = "rocosmo-data";
+pub const size = off_flags + 1; // 145

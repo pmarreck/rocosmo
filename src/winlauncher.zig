@@ -19,6 +19,7 @@
 const std = @import("std");
 const d = @import("launcher_desc.zig");
 const rt = @import("rt_ffi.zig");
+const datatree = @import("datatree.zig");
 
 // ---------------------------------------------------------------------------
 // KERNEL32 only. Handles are opaque pointers; BOOL is a C int.
@@ -41,6 +42,7 @@ extern "kernel32" fn GetFileAttributesW(name: [*:0]const u16) callconv(.winapi) 
 extern "kernel32" fn CreateDirectoryW(name: [*:0]const u16, sa: ?*anyopaque) callconv(.winapi) BOOL;
 extern "kernel32" fn MoveFileExW(existing: [*:0]const u16, new: [*:0]const u16, flags: DWORD) callconv(.winapi) BOOL;
 extern "kernel32" fn DeleteFileW(name: [*:0]const u16) callconv(.winapi) BOOL;
+extern "kernel32" fn RemoveDirectoryW(name: [*:0]const u16) callconv(.winapi) BOOL;
 extern "kernel32" fn GetProcessHeap() callconv(.winapi) HANDLE;
 extern "kernel32" fn HeapAlloc(heap: HANDLE, flags: DWORD, n: usize) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn HeapFree(heap: HANDLE, flags: DWORD, mem: ?*anyopaque) callconv(.winapi) BOOL;
@@ -55,6 +57,7 @@ const GENERIC_READ: DWORD = 0x8000_0000;
 const GENERIC_WRITE: DWORD = 0x4000_0000;
 const FILE_SHARE_READ: DWORD = 0x1;
 const OPEN_EXISTING: DWORD = 3;
+const CREATE_NEW: DWORD = 1;
 const CREATE_ALWAYS: DWORD = 2;
 const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x10;
 const FILE_BEGIN: DWORD = 0;
@@ -260,6 +263,14 @@ fn run() u32 {
 	const dir_len = ci;
 	putAscii(&cache, &ci, "\\");
 	putAscii(&cache, &ci, hash);
+	// With a data tree the app is installed with it in <hash>\<name>.exe, so an
+	// app that looks beside its own executable (Zig's lib\) finds the tree.
+	const has_data = desc[d.off_flags] & d.flag_data != 0;
+	const tree_dir_len = ci;
+	if (has_data) {
+		putAscii(&cache, &ci, "\\");
+		putAscii(&cache, &ci, exeName(app_id));
+	}
 	putAscii(&cache, &ci, ".exe");
 	if (ci >= cache.len) fail("rocosmo: path too long");
 	cache[ci] = 0;
@@ -268,36 +279,35 @@ fn run() u32 {
 	// Rebuild only on a cache miss.
 	const attrs = GetFileAttributesW(final);
 	if (attrs == invalid_file_attributes or (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-		rebuild(&self_path, idx_off, idx_len, target, &cache, dir_len, ci);
+		if (has_data) installTree(&self_path, idx_off, idx_len, target, &cache, tree_dir_len, ci, exeName(app_id)) else rebuild(&self_path, idx_off, idx_len, target, &cache, dir_len, ci);
 	}
 
 	return start(final);
 }
 
-/// Decode the target entry from this container file and write it to the cache
-/// atomically (temp file named with our PID, then MoveFileEx into place).
-fn rebuild(self_path: [*]const u16, idx_off: u64, idx_len: u64, target: []const u8, cache: []u16, dir_len: usize, final_len: usize) void {
+/// This container file, opened for reading, with its length and index.
+const Container = struct { h: HANDLE, len: u64, idx: []u8 };
+
+fn openContainer(self_path: [*]const u16, idx_off: u64, idx_len: u64) Container {
 	const self = CreateFileW(@ptrCast(self_path), GENERIC_READ, FILE_SHARE_READ, null, OPEN_EXISTING, 0, null);
 	if (self == invalid_handle) fail("rocosmo: cannot open own file");
-	defer _ = CloseHandle(self);
-
 	// Determine the container length (the file pointer at end).
 	var size: i64 = 0;
 	if (SetFilePointerEx(self, 0, &size, 2) == 0) fail("rocosmo: cannot size own file"); // FILE_END = 2
-	const container_len: u64 = @intCast(size);
-
 	const idx = alloc(idx_len);
 	if (!readAt(self, idx_off, idx)) fail("rocosmo: cannot read the container index");
+	return .{ .h = self, .len = @intCast(size), .idx = idx };
+}
 
+/// Rebuild index entry `name` (its delta reference first, if any) into a new
+/// heap buffer, through the same core the POSIX runtimes use.
+fn decodeEntry(c: Container, name: []const u8, missing: []const u8) []u8 {
 	var plan: rt.Plan = undefined;
-	if (rt.rocosmo_rt_plan_target(idx.ptr, idx.len, container_len, target.ptr, target.len, &plan) != .ok)
-		fail("rocosmo: no Windows payload in this container");
-
-	// Optional delta reference, decoded first.
+	if (rt.rocosmo_rt_plan_target(c.idx.ptr, c.idx.len, c.len, name.ptr, name.len, &plan) != .ok) fail(missing);
 	var ref: ?[]const u8 = null;
 	if (plan.ref_kind != 0) {
 		const rf = alloc(plan.ref_stored_len);
-		if (!readAt(self, plan.ref_offset, rf)) fail("rocosmo: cannot read the payload reference");
+		if (!readAt(c.h, plan.ref_offset, rf)) fail("rocosmo: cannot read the payload reference");
 		if (plan.ref_kind == 1) {
 			ref = rf; // raw
 		} else {
@@ -306,14 +316,41 @@ fn rebuild(self_path: [*]const u16, idx_off: u64, idx_len: u64, target: []const 
 			ref = rb;
 		}
 	}
-
 	const frame = alloc(plan.stored_len);
-	if (!readAt(self, plan.offset, frame)) fail("rocosmo: cannot read the Windows payload");
+	if (!readAt(c.h, plan.offset, frame)) fail("rocosmo: cannot read the container payload");
 	const out = alloc(plan.content_len);
 	const rp = if (ref) |r| r.ptr else null;
 	const rl = if (ref) |r| r.len else 0;
 	if (rt.rocosmo_rt_decode(frame.ptr, frame.len, rp, rl, out.ptr, out.len) != .ok)
-		fail("rocosmo: cannot decode the Windows payload");
+		fail("rocosmo: cannot decode the container payload");
+	return out;
+}
+
+/// Create `path` (which must not exist) holding `bytes`.
+fn writeNew(path: [*:0]const u16, bytes: []const u8) bool {
+	const h = CreateFileW(path, GENERIC_WRITE, 0, null, CREATE_NEW, 0, null);
+	if (h == invalid_handle) return false;
+	var ok = true;
+	var done: usize = 0;
+	while (done < bytes.len) {
+		var put: DWORD = 0;
+		const want: DWORD = @intCast(@min(bytes.len - done, @as(usize, 1) << 30));
+		if (WriteFile(h, bytes.ptr + done, want, &put, null) == 0 or put == 0) {
+			ok = false;
+			break;
+		}
+		done += put;
+	}
+	if (CloseHandle(h) == 0) ok = false;
+	return ok;
+}
+
+/// Decode the target entry from this container file and write it to the cache
+/// atomically (temp file named with our PID, then MoveFileEx into place).
+fn rebuild(self_path: [*]const u16, idx_off: u64, idx_len: u64, target: []const u8, cache: []u16, dir_len: usize, final_len: usize) void {
+	const c = openContainer(self_path, idx_off, idx_len);
+	defer _ = CloseHandle(c.h);
+	const out = decodeEntry(c, target, "rocosmo: no Windows payload in this container");
 
 	// Write to <hash>.exe.<pid>, then rename into place.
 	var ti = final_len;
@@ -326,21 +363,7 @@ fn rebuild(self_path: [*]const u16, idx_off: u64, idx_len: u64, target: []const 
 	tmp[ti] = 0;
 	_ = dir_len;
 
-	const h = CreateFileW(@ptrCast(&tmp), GENERIC_WRITE, 0, null, CREATE_ALWAYS, 0, null);
-	if (h == invalid_handle) fail("rocosmo: cannot create the cache file");
-	var wrote_ok = true;
-	var done: usize = 0;
-	while (done < out.len) {
-		var put: DWORD = 0;
-		const want: DWORD = @intCast(@min(out.len - done, @as(usize, 1) << 30));
-		if (WriteFile(h, out.ptr + done, want, &put, null) == 0 or put == 0) {
-			wrote_ok = false;
-			break;
-		}
-		done += put;
-	}
-	_ = CloseHandle(h);
-	if (!wrote_ok) {
+	if (!writeNew(@ptrCast(&tmp), out)) {
 		_ = DeleteFileW(@ptrCast(&tmp));
 		fail("rocosmo: cannot write the cache file");
 	}
@@ -349,6 +372,132 @@ fn rebuild(self_path: [*]const u16, idx_off: u64, idx_len: u64, target: []const 
 		// A concurrent launcher may have won the race and created it already.
 		if (GetFileAttributesW(@ptrCast(cache.ptr)) == invalid_file_attributes) fail("rocosmo: cannot install the cache file");
 	}
+}
+
+/// The installed executable's base name with a data tree: the app id's last
+/// label (dev.rocosmo.zig -> zig), as the POSIX dispatcher names it.
+fn exeName(app_id: []const u8) []const u8 {
+	return app_id[(std.mem.lastIndexOfScalar(u8, app_id, '.') orelse return app_id) + 1 ..];
+}
+
+/// Append a data tree path (validated UTF-8, '/'-separated) as UTF-16 with
+/// backslashes.
+fn putTreePath(buf: []u16, i: *usize, path: []const u8) void {
+	if (buf.len - i.* < path.len + 1) fail("rocosmo: path too long");
+	const n = std.unicode.utf8ToUtf16Le(buf[i.*..], path) catch fail("rocosmo: data tree path is not UTF-8");
+	for (buf[i.*..][0..n]) |*c| {
+		if (c.* == '/') c.* = '\\';
+	}
+	i.* += n;
+}
+
+/// With a data tree: build `\\?\<cache>\<hash>.<pid>\` holding <name>.exe and
+/// every file of the tree, then move the directory into place as <hash>, so
+/// the app finds the tree beside itself. `\\?\` lifts the 260-character path
+/// limit for the deep tree. The tree's paths were validated by the core walk
+/// (relative, no . or .., no Windows-reserved characters).
+fn installTree(self_path: [*]const u16, idx_off: u64, idx_len: u64, target: []const u8, cache: []u16, dir_len: usize, exe_len: usize, name: []const u8) void {
+	const c = openContainer(self_path, idx_off, idx_len);
+	defer _ = CloseHandle(c.h);
+	const payload = decodeEntry(c, target, "rocosmo: no Windows payload in this container");
+	const tree = decodeEntry(c, d.data_entry, "rocosmo: no data tree in this container");
+
+	var tmp: [32768]u16 = undefined;
+	var ti: usize = 0;
+	putAscii(&tmp, &ti, "\\\\?\\");
+	putW(&tmp, &ti, cache[0..dir_len]);
+	putAscii(&tmp, &ti, ".");
+	var pid_buf: [10]u8 = undefined;
+	putAscii(&tmp, &ti, std.fmt.bufPrint(&pid_buf, "{d}", .{GetCurrentProcessId()}) catch unreachable);
+	tmp[ti] = 0;
+	const tmp_len = ti;
+	if (CreateDirectoryW(@ptrCast(&tmp), null) == 0) fail("rocosmo: cannot create the install directory");
+
+	var path: [32768]u16 = undefined;
+	var pi: usize = 0;
+	putW(&path, &pi, tmp[0..tmp_len]);
+	putAscii(&path, &pi, "\\");
+	putAscii(&path, &pi, name);
+	putAscii(&path, &pi, ".exe");
+	path[pi] = 0;
+	if (!writeNew(@ptrCast(&path), payload)) failInstall(&tmp, tmp_len, tree, name, "rocosmo: cannot write the application");
+
+	var it = datatree.Iterator.init(tree) catch failInstall(&tmp, tmp_len, tree, name, "rocosmo: data tree is malformed");
+	var prev_dir: []const u8 = "";
+	while (it.next() catch failInstall(&tmp, tmp_len, tree, name, "rocosmo: data tree is malformed")) |e| {
+		pi = tmp_len;
+		putAscii(&path, &pi, "\\");
+		const rel_start = pi;
+		putTreePath(&path, &pi, e.path);
+		path[pi] = 0;
+		// Parent directories, unless this file shares the previous one's.
+		const dir = e.path[0 .. std.mem.lastIndexOfScalar(u8, e.path, '/') orelse 0];
+		if (!std.mem.eql(u8, dir, prev_dir)) {
+			var k = rel_start;
+			while (k < pi) : (k += 1) if (path[k] == '\\') {
+				path[k] = 0;
+				_ = CreateDirectoryW(@ptrCast(&path), null); // exists: fine; real failures surface below
+				path[k] = '\\';
+			};
+			prev_dir = dir;
+		}
+		if (!writeNew(@ptrCast(&path), e.bytes)) failInstall(&tmp, tmp_len, tree, name, "rocosmo: cannot write the data tree");
+	}
+
+	var final: [32768]u16 = undefined;
+	var fi: usize = 0;
+	putAscii(&final, &fi, "\\\\?\\");
+	putW(&final, &fi, cache[0..dir_len]);
+	final[fi] = 0;
+	if (MoveFileExW(@ptrCast(&tmp), @ptrCast(&final), 0) == 0) {
+		removeTree(&tmp, tmp_len, tree, name);
+		// A concurrent launcher may have installed it first.
+		cache[exe_len] = 0;
+		if (GetFileAttributesW(@ptrCast(cache.ptr)) == invalid_file_attributes) fail("rocosmo: cannot install the application directory");
+	}
+}
+
+fn failInstall(tmp: []u16, tmp_len: usize, tree: []const u8, name: []const u8, msg: []const u8) noreturn {
+	removeTree(tmp, tmp_len, tree, name);
+	fail(msg);
+}
+
+/// Best-effort removal of an unfinished install directory: the files we wrote
+/// (the executable and the tree's entries), then every directory, deepest
+/// first. Each directory is an ancestor of some file, so trying the ancestors
+/// of each entry in order removes them all once they are empty.
+fn removeTree(tmp: []u16, tmp_len: usize, tree: []const u8, name: []const u8) void {
+	var path: [32768]u16 = undefined;
+	var pi: usize = 0;
+	putW(&path, &pi, tmp[0..tmp_len]);
+	putAscii(&path, &pi, "\\");
+	putAscii(&path, &pi, name);
+	putAscii(&path, &pi, ".exe");
+	path[pi] = 0;
+	_ = DeleteFileW(@ptrCast(&path));
+	for (0..2) |pass| {
+		var it = datatree.Iterator.init(tree) catch break;
+		while (it.next() catch null) |e| {
+			pi = tmp_len;
+			putAscii(&path, &pi, "\\");
+			const rel_start = pi;
+			putTreePath(&path, &pi, e.path);
+			path[pi] = 0;
+			if (pass == 0) {
+				_ = DeleteFileW(@ptrCast(&path));
+				continue;
+			}
+			var k = pi;
+			while (k > rel_start) {
+				k -= 1;
+				if (path[k] != '\\') continue;
+				path[k] = 0;
+				_ = RemoveDirectoryW(@ptrCast(&path));
+			}
+		}
+	}
+	tmp[tmp_len] = 0;
+	_ = RemoveDirectoryW(@ptrCast(tmp.ptr));
 }
 
 /// Ctrl-C handler: return TRUE so this launcher ignores the event and stays

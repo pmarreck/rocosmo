@@ -112,14 +112,15 @@ case "$rc:$err" in "1:rocosmo-runtime: plan9-mips: "?*) pass "runtime refuses a 
 run_capture "$rt" "$app" ${xy% *} ${xy#* } linux-x86_64 "$p7/rt-exists"
 assert_eq "runtime never overwrites an existing OUT" "1:rocosmo-runtime: $p7/rt-exists: File exists" "$rc:$err"
 # Size gate: the x86_64/aarch64 Linux runtimes link no C library (nolibc) and
-# the macOS/BSD runtimes link the system libc dynamically; all are 9.9-11.3 KB
-# gzipped (RESEARCH.md section 15), gated at 12000 with under 1 KB of headroom.
-# The other Linux architectures link Zig's bundled musl statically, so they run
-# on any Linux of that CPU regardless of its libc; that static startup makes
-# them larger (14-18 KB gzipped), gated separately. The targets come from the
-# table in src/targets.zig.
-rt_gate=12000
-rt_gate_static=20000
+# the macOS/BSD runtimes link the system libc dynamically. They were 9.9-11.3 KB
+# gzipped (RESEARCH.md section 15); the data-tree installer (--install, about
+# 2 KB gzipped) brought them to 12.0-13.6 KB, gated at 14000. The other Linux
+# CPUs link Zig's bundled musl statically, so they run on any Linux of that
+# CPU regardless of its libc; that makes them larger (16.0-19.9 KB gzipped),
+# gated at 21000. Each gate leaves about 1 KB of headroom, so unplanned growth
+# fails. The targets come from the table in src/targets.zig.
+rt_gate=14000
+rt_gate_static=21000
 for t in $(grep -o '\.name = "[^"]*"' "$ROOT/src/targets.zig" | cut -d'"' -f2); do
 	[ -s "$rt_dir/$t" ] || { fail "$t runtime is built" "no $rt_dir/$t"; continue; }
 	gz=$(gzip -9 -n -c "$rt_dir/$t" | wc -c)

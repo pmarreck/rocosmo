@@ -12,7 +12,7 @@ pub const Payload = extern struct {
 	bytes_len: usize,
 };
 
-pub const Status = enum(c_int) { ok = 0, not_pe = 1, unsupported_pe = 2, headers_overflow = 3, invalid_pattern = 4, out_of_memory = 5, invalid_argument = 6, invalid_name = 7, too_many_targets = 8, encode_failed = 9, unknown_target = 10, invalid_app_id = 11, conflicting_app_ids = 12 };
+pub const Status = enum(c_int) { ok = 0, not_pe = 1, unsupported_pe = 2, headers_overflow = 3, invalid_pattern = 4, out_of_memory = 5, invalid_argument = 6, invalid_name = 7, too_many_targets = 8, encode_failed = 9, unknown_target = 10, invalid_app_id = 11, conflicting_app_ids = 12, data_not_tar = 13, data_unsupported_entry = 14, data_bad_path = 15, data_path_conflict = 16, data_too_many = 17 };
 
 const gpa = std.heap.c_allocator;
 
@@ -52,6 +52,8 @@ export fn rocosmo_pack(pe: ?[*]const u8, pe_len: usize, payloads: ?[*]const Payl
 		error.InvalidPattern => .invalid_pattern,
 		error.OutOfMemory => .out_of_memory,
 		error.InvalidName => .invalid_name,
+		error.InvalidData => .data_not_tar,
+		error.InvalidJobs => .invalid_argument,
 		error.TooManyTargets => .too_many_targets,
 		error.EncodeFailed => .encode_failed,
 	};
@@ -78,6 +80,11 @@ export fn rocosmo_status_message(status: c_int) callconv(.c) [*:0]const u8 {
 		10 => "unknown target name",
 		11 => "app id must be lowercase reverse-DNS, e.g. org.example.tool (labels of a-z, 0-9 and -)",
 		12 => "payloads declare conflicting ROCOSMO_APP_ID values",
+		13 => "--data: not a readable tar archive",
+		14 => "--data: only regular files and directories are supported (no links or special files); create the tar with copies instead of links, e.g. GNU tar -h --hard-dereference",
+		15 => "--data: a path is unsafe or not portable (absolute, empty, . or .., control or Windows-reserved characters, a trailing dot or space, invalid UTF-8)",
+		16 => "--data: a file is also used as a directory",
+		17 => "--data: too many files",
 		else => "invalid argument",
 	};
 }
@@ -118,9 +125,19 @@ export fn rocosmo_target_pattern(name: ?[*]const u8, name_len: usize, pattern: ?
 	return .ok;
 }
 
+/// Worker threads when the caller passes jobs == 0: one per CPU, at most
+/// this many, since each level-19 delta encoder holds about 0.6 GB.
+const auto_jobs_max = 8;
+
+fn jobsArg(jobs: usize) usize {
+	if (jobs != 0) return jobs;
+	return @min(std.Thread.getCpuCount() catch 1, auto_jobs_max);
+}
+
 /// zstd layout: targets by known name; each gets its embedded runtime.
-/// `level` is the zstd compression level (1-22).
-export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Target, count: usize, level: c_int, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
+/// `level` is the zstd compression level (1-22); `jobs` the worker threads
+/// compressing frames (0: one per CPU, up to 8). The output does not depend on it.
+export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Target, count: usize, level: c_int, jobs: usize, data_tar: ?[*]const u8, data_tar_len: usize, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
 	const idp = id orelse return .invalid_argument;
 	const o = out orelse return .invalid_argument;
 	const ol = out_len orelse return .invalid_argument;
@@ -135,7 +152,11 @@ export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Tar
 		const k = targets.find(name) orelse return .unknown_target;
 		t.* = .{ .name = k.name, .pattern = k.pattern, .arch = k.arch, .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{}, .runtime_gz = runtimeFor(k.name) };
 	}
-	const result = pack.packZstd(gpa, pe_slice.pe, ts, level, idp[0..id_len]) catch |e| return switch (e) {
+	var tree: ?[]u8 = null;
+	const ds = dataTree(data_tar, data_tar_len, &tree);
+	if (ds != .ok) return ds;
+	defer if (tree) |t| gpa.free(t);
+	const result = pack.packZstdWith(gpa, pe_slice.pe, ts, level, idp[0..id_len], .{ .data = tree, .jobs = jobsArg(jobs) }) catch |e| return switch (e) {
 		error.InvalidAppId => .invalid_app_id,
 		error.NotPe => .not_pe,
 		error.UnsupportedPe => .unsupported_pe,
@@ -143,6 +164,8 @@ export fn rocosmo_pack_zstd(pe: ?[*]const u8, pe_len: usize, list: ?[*]const Tar
 		error.InvalidPattern => .invalid_pattern,
 		error.OutOfMemory => .out_of_memory,
 		error.InvalidName => .invalid_name,
+		error.InvalidData => .data_not_tar,
+		error.InvalidJobs => .invalid_argument,
 		error.TooManyTargets => .too_many_targets,
 		error.EncodeFailed => .encode_failed,
 	};
@@ -158,7 +181,7 @@ const launcher = @import("launcher");
 /// separately (win_pe) and stored as a compressed entry named "windows-x86_64"
 /// that the launcher rebuilds and runs, instead of sitting uncompressed at the
 /// front. `list`/`count` are the other (POSIX) targets, as for rocosmo_pack_zstd.
-export fn rocosmo_pack_zstd_launcher(win_pe: ?[*]const u8, win_pe_len: usize, list: ?[*]const Target, count: usize, level: c_int, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
+export fn rocosmo_pack_zstd_launcher(win_pe: ?[*]const u8, win_pe_len: usize, list: ?[*]const Target, count: usize, level: c_int, jobs: usize, data_tar: ?[*]const u8, data_tar_len: usize, id: ?[*]const u8, id_len: usize, out: ?*?[*]u8, out_len: ?*usize) callconv(.c) Status {
 	const idp = id orelse return .invalid_argument;
 	const o = out orelse return .invalid_argument;
 	const ol = out_len orelse return .invalid_argument;
@@ -178,7 +201,11 @@ export fn rocosmo_pack_zstd_launcher(win_pe: ?[*]const u8, win_pe_len: usize, li
 		const k = targets.find(src.name[0..src.name_len]) orelse return .unknown_target;
 		t.* = .{ .name = k.name, .pattern = k.pattern, .arch = k.arch, .bytes = if (src.bytes) |b| b[0..src.bytes_len] else &.{}, .runtime_gz = runtimeFor(k.name) };
 	}
-	const result = pack.packZstdLauncher(gpa, launcher.bytes, ts, level, idp[0..id_len], win_name) catch |e| return switch (e) {
+	var tree: ?[]u8 = null;
+	const ds = dataTree(data_tar, data_tar_len, &tree);
+	if (ds != .ok) return ds;
+	defer if (tree) |t| gpa.free(t);
+	const result = pack.packZstdWith(gpa, launcher.bytes, ts, level, idp[0..id_len], .{ .win_name = win_name, .data = tree, .jobs = jobsArg(jobs) }) catch |e| return switch (e) {
 		error.InvalidAppId => .invalid_app_id,
 		error.NotPe => .not_pe,
 		error.UnsupportedPe => .unsupported_pe,
@@ -186,6 +213,8 @@ export fn rocosmo_pack_zstd_launcher(win_pe: ?[*]const u8, win_pe_len: usize, li
 		error.InvalidPattern => .invalid_pattern,
 		error.OutOfMemory => .out_of_memory,
 		error.InvalidName => .invalid_name,
+		error.InvalidData => .data_not_tar,
+		error.InvalidJobs => .invalid_argument,
 		error.TooManyTargets => .too_many_targets,
 		error.EncodeFailed => .encode_failed,
 	};
@@ -219,5 +248,23 @@ export fn rocosmo_resolve_app_id(option: ?[*]const u8, option_len: usize, payloa
 	o.* = @constCast(r.id.ptr);
 	ol.* = r.id.len;
 	src.* = @intFromEnum(r.source);
+	return .ok;
+}
+
+const datatree = @import("datatree.zig");
+
+/// The optional --data tar, converted into an encoded data tree (owned by
+/// the caller) by the pure core. NULL with length 0 means "no data tree".
+fn dataTree(tar: ?[*]const u8, len: usize, out: *?[]u8) Status {
+	out.* = null;
+	const t = tar orelse return if (len == 0) .ok else .invalid_argument;
+	out.* = datatree.fromTar(gpa, t[0..len]) catch |e| return switch (e) {
+		error.OutOfMemory => .out_of_memory,
+		error.UnsupportedEntry => .data_unsupported_entry,
+		error.BadPath => .data_bad_path,
+		error.PathConflict => .data_path_conflict,
+		error.TooMany => .data_too_many,
+		else => .data_not_tar,
+	};
 	return .ok;
 }

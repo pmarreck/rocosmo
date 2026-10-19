@@ -19,10 +19,15 @@
 #include "rocosmo_rt.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h> /* rename() only; no stdio streams are used */
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 #ifdef __linux__
 #ifndef MFD_EXEC
 #define MFD_EXEC 0x0010U
@@ -76,6 +81,10 @@ _Noreturn void rocosmo_zdec_fail(void) {
 
 static const char usage_file[] = "rocosmo-runtime CONTAINER INDEX_OFFSET INDEX_LEN TARGET OUT";
 static const char usage_exec[] = "rocosmo-runtime --exec CONTAINER INDEX_OFFSET INDEX_LEN TARGET ARGV0 [ARG]...";
+static const char usage_install[] = "rocosmo-runtime --install CONTAINER INDEX_OFFSET INDEX_LEN TARGET TMPDIR DIR NAME";
+/* Index entry of the data tree (pack.data_entry_name). */
+#define DATA_ENTRY "rocosmo-data"
+#define PATH_MAX_BYTES 4096
 
 static int usage_error(const char *usage) {
 	SAY(2, "rocosmo-runtime: usage: ", usage, "\n");
@@ -182,6 +191,79 @@ static int to_file(int argc, char **argv) {
 	return 0;
 }
 
+/* Rename DIR into place unless something is already there: Linux refuses to
+ * replace it (renameat2 RENAME_NOREPLACE, falling back to rename where the
+ * file system lacks it); elsewhere rename of a directory onto a non-empty
+ * directory fails. Returns 0 when renamed or when another run won the race. */
+static int rename_into_place(const char *from, const char *to) {
+#ifdef __linux__
+	if (!syscall(SYS_renameat2, AT_FDCWD, from, AT_FDCWD, to, 1 /* RENAME_NOREPLACE */)) return 0;
+	if (errno == EEXIST || errno == ENOTEMPTY) return 0;
+	if (errno != EINVAL && errno != ENOSYS) return -1;
+#endif
+	if (!rename(from, to)) return 0;
+	return (errno == EEXIST || errno == ENOTEMPTY) ? 0 : -1;
+}
+
+/* Write a NUL-terminated join of base, "/" and rel (rel_len bytes) into buf. */
+static int join(char *buf, const char *base, const uint8_t *rel, size_t rel_len) {
+	size_t b = strlen(base);
+	if (b + 1 + rel_len + 1 > PATH_MAX_BYTES) return -1;
+	memcpy(buf, base, b);
+	buf[b] = '/';
+	memcpy(buf + b + 1, rel, rel_len);
+	buf[b + 1 + rel_len] = 0;
+	return 0;
+}
+
+static int write_new(const char *path, const uint8_t *b, size_t len, int mode) {
+	int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
+	if (fd < 0) return -1;
+	if (write_all(fd, b, len)) { close(fd); return -1; }
+	return close(fd);
+}
+
+/* --install CONTAINER INDEX_OFFSET INDEX_LEN TARGET TMPDIR DIR NAME: build
+ * TMPDIR (new, mode 0700) holding TARGET's payload as NAME and the data tree,
+ * then rename it to DIR. The tree's paths are validated by the core walk
+ * (relative, no . or .., portable), so they cannot leave TMPDIR. */
+static int install(int argc, char **argv) {
+	if (argc != 9) return usage_error(usage_install);
+	const char *tmp = argv[6], *dir = argv[7], *name = argv[8];
+	for (const char *c = name; *c; c++) if (*c == '/') return fail(name, "not a plain file name");
+	if (!*name || !strcmp(name, ".") || !strcmp(name, "..")) return fail(name, "not a plain file name");
+	int fd;
+	rocosmo_rt_plan p, dp;
+	int s = plan(argv[2], argv[3], argv[4], argv[5], &fd, &p);
+	if (s) return s;
+	close(fd);
+	if ((s = plan(argv[2], argv[3], argv[4], DATA_ENTRY, &fd, &dp))) return s;
+	const uint8_t *payload, *tree;
+	if ((s = rebuild(fd, argv[5], &p, &payload)) || (s = rebuild(fd, DATA_ENTRY, &dp, &tree))) return s;
+	close(fd);
+	if (mkdir(tmp, 0700)) return fail(tmp, strerror(errno));
+	static char path[PATH_MAX_BYTES];
+	if (join(path, tmp, (const uint8_t *)name, strlen(name)) || write_new(path, payload, (size_t)p.content_len, 0755)) return fail(path, strerror(errno));
+	rocosmo_rt_tree_iter it = {0};
+	rocosmo_rt_tree_entry e;
+	for (int has = 1;;) {
+		if ((s = rocosmo_rt_tree_next(tree, (size_t)dp.content_len, &it, &e, &has))) return fail(DATA_ENTRY, rocosmo_rt_status_message(s));
+		if (!has) break;
+		if (join(path, tmp, e.path, e.path_len)) return fail(DATA_ENTRY, "path too long");
+		/* Parent directories: each '/' after TMPDIR's own prefix. */
+		for (char *c = path + strlen(tmp) + 1; *c; c++) {
+			if (*c != '/') continue;
+			*c = 0;
+			int r = mkdir(path, 0755);
+			*c = '/';
+			if (r && errno != EEXIST) return fail(path, strerror(errno));
+		}
+		if (write_new(path, e.bytes, e.bytes_len, e.exec ? 0755 : 0644)) return fail(path, strerror(errno));
+	}
+	if (rename_into_place(tmp, dir)) return fail(dir, strerror(errno));
+	return 0;
+}
+
 /* Run the container again through sh on its cache path, with
  * ROCOSMO_NO_MEMFD=1 added to the environment (exec; returns only on error). */
 static int fall_back(char *container, char **args) {
@@ -228,9 +310,11 @@ static int to_memory(int argc, char **argv) {
 
 int main(int argc, char **argv) {
 	if (argc == 2 && (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help"))) {
-		SAY(1, "Usage: ", usage_file, "\n       ", usage_exec, "\n"
+		SAY(1, "Usage: ", usage_file, "\n       ", usage_exec, "\n       ", usage_install, "\n"
 			"Rebuild TARGET's executable from a rocosmo zstd-layout CONTAINER into OUT, or\n"
 			"(--exec, Linux) run it from memory, falling back to the cache path.\n"
+			"(--install) build TMPDIR with the payload as NAME plus the container's data tree,\n"
+			"then rename it to DIR.\n"
 			"Normally run by the container's own dispatcher, not by hand.\n");
 		return 0;
 	}
@@ -239,5 +323,6 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 	if (argc > 1 && !strcmp(argv[1], "--exec")) return to_memory(argc, argv);
+	if (argc > 1 && !strcmp(argv[1], "--install")) return install(argc, argv);
 	return to_file(argc, argv);
 }

@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -110,6 +111,16 @@ int unlink(const char *path) { return (int)ret(SYS(SYS_unlinkat, AT_FDCWD, path,
 int memfd_create(const char *name, unsigned flags) { return (int)ret(SYS(SYS_memfd_create, name, flags, 0, 0, 0, 0)); }
 int execve(const char *path, char *const argv[], char *const envp[]) { return (int)ret(SYS(SYS_execve, path, argv, envp, 0, 0, 0)); }
 int fexecve(int fd, char *const argv[], char *const envp[]) { return (int)ret(SYS(SYS_execveat, fd, "", argv, envp, AT_EMPTY_PATH, 0)); }
+int mkdir(const char *path, mode_t mode) { return (int)ret(SYS(SYS_mkdirat, AT_FDCWD, path, mode, 0, 0, 0)); }
+/* renameat2 with flags 0: aarch64 has no renameat or rename system call. */
+int rename(const char *from, const char *to) { return (int)ret(SYS(SYS_renameat2, AT_FDCWD, from, AT_FDCWD, to, 0, 0)); }
+long syscall(long n, ...) {
+	va_list ap;
+	va_start(ap, n);
+	long a = va_arg(ap, long), b = va_arg(ap, long), c = va_arg(ap, long), d = va_arg(ap, long), e = va_arg(ap, long), f = va_arg(ap, long);
+	va_end(ap);
+	return ret(sys6(n, a, b, c, d, e, f));
+}
 
 /* Each block is its own mapping with a 16-byte header holding the mapping
  * size. The zstd decoder allocates and frees a few small tables per 128 KB

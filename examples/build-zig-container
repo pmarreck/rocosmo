@@ -11,12 +11,12 @@
 # downloads the official releases, verifies the SHA-256 that
 # ziglang.org/download/index.json publishes, and packs the `zig` executables.
 #
-# Note: `zig version`, `zig env` and the like run straight from the container.
-# Compiling also needs Zig's `lib/` directory, which `zig` finds by walking up
-# from its own executable; here that is rocosmo's cached copy, so set
-# `ZIG_LIB_DIR` to a `lib/` from any official 0.16.0 download (all 16 hold the
-# same `lib/`). The official download needs `lib/` too; it ships beside `zig`.
-# See examples/README.md.
+# Compiling needs Zig's `lib/` (standard library, libc headers, compiler-rt
+# sources), which `zig` finds beside its own executable. It is byte-identical in
+# all 16 downloads, so it is packed once as a data tree (rocosmo-pack --data)
+# that the container installs beside `zig` on first run, and the Windows build
+# goes behind the launcher (--windows-launcher) so Windows installs it the same
+# way: `zig build` then works with no setup. See examples/README.md.
 #
 # Usage: examples/build-zig-container OUT [--level N]
 #   --level N  zstd level, 1-22 (default 19)
@@ -93,6 +93,13 @@ while read -r slot archive sha member; do
 done <<EOF
 $targets
 EOF
+
+# lib/ from the verified Linux x86_64 archive, as a tar of plain files.
+lib_src="zig-x86_64-linux-$ver"
+tar -xJf "$cache/$lib_src.tar.xz" -C "$cache" "$lib_src/lib" || { echo "build-zig-container: cannot extract lib/" >&2; exit 1; }
+lib_tar="$cache/zig-lib-$ver.tar"
+tar -C "$cache/$lib_src" --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --hard-dereference -cf "$lib_tar.tmp" lib && mv "$lib_tar.tmp" "$lib_tar" || exit 1
+pack_args+=(--windows-launcher --data "$lib_tar")
 
 pack="${ROCOSMO_PACK-}"
 if [ -z "$pack" ]; then

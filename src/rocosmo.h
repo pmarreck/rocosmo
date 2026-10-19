@@ -29,15 +29,20 @@ typedef struct {
 /* Static shell case pattern for a known target name; 10 if unknown. */
 int rocosmo_target_pattern(const uint8_t *name, size_t name_len, const uint8_t **pattern, size_t *pattern_len);
 /* zstd layout: whole frames or deltas plus each target's embedded runtime.
- * level is the zstd level, 1-22. Output as for rocosmo_pack. */
-int rocosmo_pack_zstd(const uint8_t *pe, size_t pe_len, const rocosmo_target *targets, size_t count, int level,
+ * level is the zstd level, 1-22. jobs is the number of threads compressing
+ * frames (0: one per CPU, up to 8); the output is the same for any count. data_tar (NULL, 0 for none) is a tar of files
+ * stored once and installed beside the payload on first run (--data). Output
+ * as for rocosmo_pack. */
+int rocosmo_pack_zstd(const uint8_t *pe, size_t pe_len, const rocosmo_target *targets, size_t count, int level, size_t jobs,
+	const uint8_t *data_tar, size_t data_tar_len,
 	const uint8_t *app_id, size_t app_id_len, uint8_t **out, size_t *out_len);
 /* Like rocosmo_pack_zstd, but front the container with the embedded Windows
  * launcher (opt-in): the app's own Windows PE (win_pe) is stored as a
  * compressed entry the launcher rebuilds and runs on first use, instead of
  * sitting uncompressed at the front. `targets`/`count` are the other (POSIX)
  * targets, as for rocosmo_pack_zstd. win_pe must be a PE32+ image. */
-int rocosmo_pack_zstd_launcher(const uint8_t *win_pe, size_t win_pe_len, const rocosmo_target *targets, size_t count, int level,
+int rocosmo_pack_zstd_launcher(const uint8_t *win_pe, size_t win_pe_len, const rocosmo_target *targets, size_t count, int level, size_t jobs,
+	const uint8_t *data_tar, size_t data_tar_len,
 	const uint8_t *app_id, size_t app_id_len, uint8_t **out, size_t *out_len);
 
 typedef struct { const uint8_t *ptr; size_t len; } rocosmo_buffer;

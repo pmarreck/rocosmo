@@ -10,6 +10,7 @@ test {
 	_ = @import("targets.zig");
 	_ = @import("rt_ffi.zig");
 	_ = @import("app_id.zig");
+	_ = @import("datatree.zig");
 }
 
 /// The runtimes report and exit on structurally corrupt zstd input; no unit

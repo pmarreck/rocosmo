@@ -88,6 +88,18 @@ macos-arm64        Darwin-arm64|Darwin-aarch64
 
 The second column is the `uname -s`-`uname -m` pattern that selects each target. The shell dispatcher answers the flag, so on Windows, where the file runs as the app's own PE, the flag goes to the app. In any other position it also goes to the app. In the universal format the dispatcher has to fit in the space before the PE's first section; with a PE whose first section is at 0x1000 and that has up to seven sections (`zig.exe`, for example), every target in the table fits, with no room for more.
 
+Some programs need data files next to their executable; Zig, for example, looks for its `lib/` there. `--data FILE.tar` stores such a tree once, compressed, for all targets. On first run the container installs it into the cache with the payload, in a directory of its own named by a hash of both, so the program finds it beside itself:
+
+```sh
+tar -cf lib.tar lib                # regular files and directories only
+rocosmo-pack --windows-x86_64 tool.exe --windows-launcher \
+	--linux-x86_64 tool-linux --macos-arm64 tool-mac --data lib.tar -o tool
+```
+
+`--data` needs the zstd layout. The payload is installed under the app id's last label (`dev.example.tool` gives `tool`). On Windows only `--windows-launcher` installs anything, since without it Windows runs the file in place. Links are refused; GNU tar's `-h --hard-dereference` stores them as copies. A new tree is a new version, and older versions' directories are removed after the next install. If two versions of the same app run at that moment, the older one can lose its files. [TECHNIQUE.md](TECHNIQUE.md) ("Data trees") has the details.
+
+The zstd layout compresses every frame (each payload, each same-CPU delta and the data tree) independently, on one thread per CPU, up to 8 by default. `--jobs N` sets the count; the container is byte-identical for any `N`. Each level-19 delta encoder holds about 0.6 GB, so raise it only with memory to match.
+
 `scripts/build-pack-container OUT` packs `rocosmo-pack` itself into one 1.6 MB file for all ten targets, so it runs without Nix or Zig on every system in the table above. The tests run it on Linux, macOS, Windows, FreeBSD, NetBSD and OpenBSD, and on Linux, macOS and Windows its containers are byte-identical to the ones the native build writes.
 
 ### The Roc compiler in one file
@@ -111,7 +123,7 @@ Together, the Roc container and the rocosmo-pack container are a complete toolch
 
 ## Layouts
 
-`--layout raw` stores each executable as-is; the dispatcher copies it out with `dd`. `--layout zstd` stores each one as a [Zstandard](https://github.com/facebook/zstd) frame, or as a delta against a same-CPU executable or the Windows image, plus a small runtime per OS and CPU (about 10 KB gzipped) that rebuilds it. The default, `--layout auto`, builds both and keeps the smaller: raw for a single small payload, zstd once the payloads add up to a few tens of KB.
+`--layout raw` stores each executable as-is; the dispatcher copies it out with `dd`. `--layout zstd` stores each one as a [Zstandard](https://github.com/facebook/zstd) frame, or as a delta against a same-CPU executable or the Windows image, plus a small runtime per OS and CPU (12-20 KB gzipped) that rebuilds it. The default, `--layout auto`, builds both and keeps the smaller: raw for a single small payload, zstd once the payloads add up to a few tens of KB.
 
 On Linux the zstd layout runs the program from a sealed `memfd` instead of caching it, so only the shared runtime is ever written to disk, once per machine. Payloads over 64 MiB still go to the cache. If the kernel refuses (no `memfd_create`, `vm.memfd_noexec=2`, a security module), the runtime re-runs the file with `ROCOSMO_NO_MEMFD=1`, which selects the cache. Users can set that variable themselves too, and the app's child processes inherit it.
 

@@ -22,5 +22,13 @@ int rocosmo_rt_plan_target(const uint8_t *index, size_t index_len, uint64_t cont
 /* Decode one zstd frame into out (exactly its content size). ref may be NULL. */
 int rocosmo_rt_decode(const uint8_t *frame, size_t frame_len, const uint8_t *ref, size_t ref_len,
 	uint8_t *out, size_t out_len);
+/* Walk state for a data tree (zero it before the first call). */
+typedef struct { uint64_t pos, prev_off; uint32_t prev_len, left, started; } rocosmo_rt_tree_iter;
+typedef struct { const uint8_t *path; size_t path_len; const uint8_t *bytes; size_t bytes_len; uint32_t exec; } rocosmo_rt_tree_entry;
+/* Next entry of an encoded data tree: *has = 1 and *out filled, or *has = 0 at
+ * the end. Each entry is validated first: its path is relative, confined (no
+ * empty, . or .. component) and portable, so it may be joined as is. */
+int rocosmo_rt_tree_next(const uint8_t *tree, size_t tree_len, rocosmo_rt_tree_iter *it,
+	rocosmo_rt_tree_entry *out, int *has);
 const char *rocosmo_rt_status_message(int status);
 #endif
