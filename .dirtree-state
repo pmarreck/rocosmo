@@ -19,9 +19,9 @@ annotate=[
 	docs/ZSTD_DECODER_SPEC.md = Spec for a minimum zstd decoder for the runtimes: required frame/block/entropy features, raw-content reference (patch-from) rule, design latitude, acceptance tests
 	docs/plan_context/windows_launcher.md = Proposal (on hold) for an opt-in Windows launcher for large universal containers
 	docs/plan_context/zstd_runtime.md = Background moved from PLAN.md: zstd runtime design study and the open OpenBSD item
-	examples/README.md = Worked examples: the Zig compiler and a Rust program as rocosmo containers, with recorded sizes/runs and caveats
-	examples/build-rust-container = Cross-build a small Rust program for several targets and pack it into one universal binary (Rust's compiler is not single-file; this packs its output)
-	examples/build-zig-container = Build the official Zig compiler for five OS/CPU targets into one universal zig container (pinned official downloads)
+	examples/README.md = Zig (16 slots, 642 MB) and Rust (13 slots, 1.8 MB) universal containers: sizes and per-system evidence (native, qemu, Rosetta, Windows, BSD VMs)
+	examples/build-rust-container = Cross-build examples/rust_hello for 11 slots (cargo-zigbuild; NetBSD via zig cc) plus optional Mac-built macOS slots, and pack one universal binary
+	examples/build-zig-container = Pack the official Zig 0.16.0 compiler for all 16 rocosmo slots into one universal zig (SHA-256 pinned from ziglang.org's index)
 	examples/hello.zig = Proof-of-compile Zig program for the zig example: exits 145 = 12*12+1
 	examples/rust_hello/src/main.rs = Proof-of-run Rust program for the rust example: prints 145 = 12*12+1
 	flake.lock = Pinned flake inputs (nixpkgs, zstd sources)

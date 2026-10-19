@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Build the Zig compiler as one rocosmo container: the official Zig 0.16.0
-# release for every OS/CPU rocosmo targets (Windows x86_64; Linux and macOS on
-# x86_64 and aarch64), joined by rocosmo-pack. The result runs `zig` natively on
-# each of them; name it zig.exe on Windows.
+# release for all 16 OS/CPU slots rocosmo has (Windows x86_64; Linux on x86_64,
+# aarch64, arm, riscv64, powerpc64le, x86, loongarch64 and s390x; macOS on
+# x86_64 and arm64; FreeBSD on x86_64 and aarch64; NetBSD x86_64; OpenBSD on
+# x86_64 and aarch64), joined by rocosmo-pack. The result runs `zig` natively
+# on each of them; name it zig.exe on Windows.
 #
 # Zig ships one self-contained executable per platform (the Linux builds are
 # statically linked against musl), so no compiler is needed here: this only
-# downloads the official releases, verifies their published SHA-256, and packs
-# the five `zig` executables.
+# downloads the official releases, verifies the SHA-256 that
+# ziglang.org/download/index.json publishes, and packs the `zig` executables.
 #
 # Note: `zig version`, `zig env` and the like run straight from the container.
-# Compiling additionally needs Zig's `lib/` directory, which `zig` locates next
-# to its own executable; from rocosmo's in-memory or cached copy that directory
-# is not present, so point `ZIG_LIB_DIR` at a matching `lib/` (the same `lib/`
-# that ships in these archives). That is Zig's own requirement, not a rocosmo
-# limitation. See examples/README.md.
+# Compiling also needs Zig's `lib/` directory, which `zig` finds by walking up
+# from its own executable; here that is rocosmo's cached copy, so set
+# `ZIG_LIB_DIR` to a `lib/` from any official 0.16.0 download (all 16 hold the
+# same `lib/`). The official download needs `lib/` too; it ships beside `zig`.
+# See examples/README.md.
 #
 # Usage: examples/build-zig-container OUT [--level N]
 #   --level N  zstd level, 1-22 (default 19)
@@ -29,7 +31,7 @@ out="" level=19
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--level) [ $# -ge 2 ] || usage; level="$2"; shift 2;;
-		-h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+		-h|--help) sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
 		-*) usage;;
 		*) [ -z "$out" ] || usage; out="$1"; shift;;
 	esac
@@ -43,11 +45,22 @@ mkdir -p "$cache"
 
 # slot  archive-name  sha256  member-inside-archive
 targets="
-windows-x86_64 zig-x86_64-windows-$ver.zip    68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e zig-x86_64-windows-$ver/zig.exe
-linux-x86_64   zig-x86_64-linux-$ver.tar.xz    70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00 zig-x86_64-linux-$ver/zig
-linux-aarch64  zig-aarch64-linux-$ver.tar.xz   ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17 zig-aarch64-linux-$ver/zig
-macos-x86_64   zig-x86_64-macos-$ver.tar.xz    0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7 zig-x86_64-macos-$ver/zig
-macos-arm64    zig-aarch64-macos-$ver.tar.xz   b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489 zig-aarch64-macos-$ver/zig
+windows-x86_64    zig-x86_64-windows-$ver.zip       68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e zig-x86_64-windows-$ver/zig.exe
+linux-x86_64      zig-x86_64-linux-$ver.tar.xz      70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00 zig-x86_64-linux-$ver/zig
+linux-aarch64     zig-aarch64-linux-$ver.tar.xz     ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17 zig-aarch64-linux-$ver/zig
+linux-arm         zig-arm-linux-$ver.tar.xz         f85116bf2f9189bb6ae280c7f92f03b89c2551a88e17881c0c2df86bf4e42c50 zig-arm-linux-$ver/zig
+linux-riscv64     zig-riscv64-linux-$ver.tar.xz     bc069b0f2f568f54bafbdfc1d65b12fd386ed6a652044a37aee6a4f72f14076e zig-riscv64-linux-$ver/zig
+linux-powerpc64le zig-powerpc64le-linux-$ver.tar.xz 18800b45c08bf40b335ca5ab79aea70aca287ca969036e938155772becaeebeb zig-powerpc64le-linux-$ver/zig
+linux-x86         zig-x86-linux-$ver.tar.xz         4e34e279a9f856358de420490b531974c3d37f8f3707eef9f0342e92c14c301f zig-x86-linux-$ver/zig
+linux-loongarch64 zig-loongarch64-linux-$ver.tar.xz 2503be8ecc5965f1f7962471d267d9f83fcb3cc2f7ff78ac34093b9722bbea93 zig-loongarch64-linux-$ver/zig
+linux-s390x       zig-s390x-linux-$ver.tar.xz       14db4884b31414bd637879036c1e6e335f3ba44ccac59df104163728a0cab30e zig-s390x-linux-$ver/zig
+macos-x86_64      zig-x86_64-macos-$ver.tar.xz      0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7 zig-x86_64-macos-$ver/zig
+macos-arm64       zig-aarch64-macos-$ver.tar.xz     b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489 zig-aarch64-macos-$ver/zig
+freebsd-x86_64    zig-x86_64-freebsd-$ver.tar.xz    390379bfaf6b89b001c6bb4035b8fcbc5c12193fd9fd5048c3a0fe39e5d1cf72 zig-x86_64-freebsd-$ver/zig
+freebsd-aarch64   zig-aarch64-freebsd-$ver.tar.xz   0a441f50696a34cfb9f9a0b3c510fd49a56b18b364e03c26525cb7999959c969 zig-aarch64-freebsd-$ver/zig
+netbsd-x86_64     zig-x86_64-netbsd-$ver.tar.xz     e235ca96f63034a009aca831c69394a1c14498a8e06ff5f358fc3fb4bed73dfb zig-x86_64-netbsd-$ver/zig
+openbsd-x86_64    zig-x86_64-openbsd-$ver.tar.xz    25b72946e8b2dde5c93bc03cbebeb17e4d90eea8040acce8bb78cefdeee97337 zig-x86_64-openbsd-$ver/zig
+openbsd-aarch64   zig-aarch64-openbsd-$ver.tar.xz   f3c868ccc1bc30e2d2b68128186b2153d86c3efc41190f4170a43024a3cd7809 zig-aarch64-openbsd-$ver/zig
 "
 
 fetch_verify() { # archive sha
@@ -61,22 +74,22 @@ fetch_verify() { # archive sha
 	[ "$got" = "$2" ] || { echo "build-zig-container: SHA-256 mismatch for $1 (got $got, want $2)" >&2; return 1; }
 }
 
-extract_member() { # archive member dest
+# Extract one member next to its verified archive (on disk, not in TMPDIR:
+# sixteen compilers are several GB).
+extract_member() { # archive member
 	local f="$cache/$1"
 	case "$1" in
-		*.zip) (cd "$cache" && unzip -o -q "$f" "$2" && cp "$cache/$2" "$3");;
-		*.tar.xz) tar -xJf "$f" -C "$cache" "$2" && cp "$cache/$2" "$3";;
+		*.zip) (cd "$cache" && unzip -o -q "$f" "$2");;
+		*.tar.xz) tar -xJf "$f" -C "$cache" "$2";;
 	esac
 }
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/zig-container.XXXXXX")"
 pack_args=(--layout zstd --level "$level" --app-id dev.rocosmo.zig)
 while read -r slot archive sha member; do
 	[ -n "${slot:-}" ] || continue
 	fetch_verify "$archive" "$sha" || exit 1
-	dest="$work/$slot"; [ "$slot" = windows-x86_64 ] && dest="$dest.exe"
-	extract_member "$archive" "$member" "$dest" || { echo "extract failed: $archive" >&2; exit 1; }
-	pack_args+=("--$slot" "$dest")
+	extract_member "$archive" "$member" || { echo "extract failed: $archive" >&2; exit 1; }
+	pack_args+=("--$slot" "$cache/$member")
 done <<EOF
 $targets
 EOF

@@ -3,30 +3,38 @@
 # single file (rustc is a ~16 KB shim that dynamically links librustc_driver and
 # libLLVM and needs a multi-hundred-MB sysroot), so this packs the compiler's
 # OUTPUT instead: one tiny program (examples/rust_hello) cross-compiled for
-# several OS/CPU targets and joined into one universal binary. It runs natively
-# on each of them; name it rust-hello.exe on Windows.
+# every target rustup ships a standard library for and joined into one
+# universal binary. It runs natively on each of them; name it rust-hello.exe on
+# Windows.
 #
-# The program is built with rustup + cargo-zigbuild (Zig as the cross-linker),
-# which covers the targets that need no Apple SDK: Linux x86_64 and aarch64
-# (static musl) and Windows x86_64 (GNU). macOS cross-compilation needs an Apple
-# SDK and is left out of this Linux-only example; on a Mac you could add the two
-# Apple slots the same way. See examples/README.md.
+# Built here with rustup + cargo-zigbuild (Zig as the cross-linker): Linux on
+# x86_64, aarch64, armv7, riscv64, powerpc64le, i686 and loongarch64 (static
+# musl), Windows x86_64 (GNU), FreeBSD x86_64 and aarch64, NetBSD x86_64.
+# Not built: Linux s390x and OpenBSD (Rust tier 3, no prebuilt standard
+# library). macOS cross-compilation needs an Apple SDK, so the two macOS slots
+# come from a Mac: there, `cargo build --release --target aarch64-apple-darwin`
+# and `--target x86_64-apple-darwin` in examples/rust_hello, then pass the two
+# binaries with --macos-arm64 and --macos-x86_64. See examples/README.md.
 #
-# Usage: examples/build-rust-container OUT [--level N]
+# Usage: examples/build-rust-container OUT [--level N] [--macos-arm64 FILE] [--macos-x86_64 FILE]
 #   --level N  zstd level, 1-22 (default 19)
 # Environment: ROCOSMO_PACK (default: build zig-out/bin/rocosmo-pack).
 set -u
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="" level=19
+usage() { echo "usage: build-rust-container OUT [--level N] [--macos-arm64 FILE] [--macos-x86_64 FILE]" >&2; exit 2; }
+out="" level=19 mac_arm="" mac_x86=""
 while [ $# -gt 0 ]; do
 	case "$1" in
-		--level) [ $# -ge 2 ] || { echo "usage: build-rust-container OUT [--level N]" >&2; exit 2; }; level="$2"; shift 2;;
-		-h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
-		-*) echo "usage: build-rust-container OUT [--level N]" >&2; exit 2;;
-		*) [ -z "$out" ] || { echo "usage: build-rust-container OUT [--level N]" >&2; exit 2; }; out="$1"; shift;;
+		--level) [ $# -ge 2 ] || usage; level="$2"; shift 2;;
+		--macos-arm64) [ $# -ge 2 ] || usage; mac_arm="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2;;
+		--macos-x86_64) [ $# -ge 2 ] || usage; mac_x86="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2;;
+		-h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+		-*) usage;;
+		*) [ -z "$out" ] || usage; out="$1"; shift;;
 	esac
 done
-[ -n "$out" ] || { echo "usage: build-rust-container OUT [--level N]" >&2; exit 2; }
+[ -n "$out" ] || usage
+for m in "$mac_arm" "$mac_x86"; do [ -z "$m" ] || [ -f "$m" ] || { echo "build-rust-container: no such file: $m" >&2; exit 1; }; done
 
 # rocosmo-pack is built in the project's own dev shell (it needs the pinned Zig
 # and the vendored zstd sources); the Rust cross-build runs in a separate shell
@@ -39,7 +47,8 @@ fi
 
 if [ -z "${_ROCOSMO_RUST_ENV-}" ]; then
 	exec nix shell nixpkgs#rustup nixpkgs#cargo-zigbuild nixpkgs#zig \
-		-c env _ROCOSMO_RUST_ENV=1 ROCOSMO_PACK="$pack" "${BASH_SOURCE[0]}" "$out" --level "$level"
+		-c env _ROCOSMO_RUST_ENV=1 ROCOSMO_PACK="$pack" "${BASH_SOURCE[0]}" "$out" --level "$level" \
+		${mac_arm:+--macos-arm64 "$mac_arm"} ${mac_x86:+--macos-x86_64 "$mac_x86"}
 fi
 
 crate="$root/examples/rust_hello"
@@ -48,25 +57,45 @@ export RUSTUP_HOME="$cache/rustup" CARGO_HOME="$cache/cargo"
 export PATH="$CARGO_HOME/bin:$PATH"
 export CARGO_TARGET_DIR="$cache/target"
 
-rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || { echo "build-rust-container: rustup install failed" >&2; exit 1; }
-rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-gnu >/dev/null 2>&1 || { echo "build-rust-container: adding targets failed" >&2; exit 1; }
-
 # triple  slot  binary-name
 builds="
-x86_64-unknown-linux-musl   linux-x86_64   rust_hello
-aarch64-unknown-linux-musl  linux-aarch64  rust_hello
-x86_64-pc-windows-gnu       windows-x86_64 rust_hello.exe
+x86_64-unknown-linux-musl       linux-x86_64      rust_hello
+aarch64-unknown-linux-musl      linux-aarch64     rust_hello
+armv7-unknown-linux-musleabihf  linux-arm         rust_hello
+riscv64gc-unknown-linux-musl    linux-riscv64     rust_hello
+powerpc64le-unknown-linux-musl  linux-powerpc64le rust_hello
+i686-unknown-linux-musl         linux-x86         rust_hello
+loongarch64-unknown-linux-musl  linux-loongarch64 rust_hello
+x86_64-pc-windows-gnu           windows-x86_64    rust_hello.exe
+x86_64-unknown-freebsd          freebsd-x86_64    rust_hello
+aarch64-unknown-freebsd         freebsd-aarch64   rust_hello
+x86_64-unknown-netbsd           netbsd-x86_64     rust_hello
 "
+triples="$(printf '%s\n' "$builds" | awk 'NF { print $1 }')"
+
+rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || { echo "build-rust-container: rustup install failed" >&2; exit 1; }
+# shellcheck disable=SC2086 # one word per triple
+rustup target add $triples >/dev/null 2>&1 || { echo "build-rust-container: adding targets failed" >&2; exit 1; }
+
+# cargo-zigbuild does not know NetBSD; for it, plain cargo links through a
+# small `zig cc -target x86_64-netbsd` wrapper instead.
+mkdir -p "$cache/bin"
+printf '#!/bin/sh\nexec zig cc -target x86_64-netbsd "$@"\n' > "$cache/bin/zigcc-x86_64-netbsd" && chmod 755 "$cache/bin/zigcc-x86_64-netbsd"
+export CARGO_TARGET_X86_64_UNKNOWN_NETBSD_LINKER="$cache/bin/zigcc-x86_64-netbsd"
+
 pack_args=(--layout zstd --level "$level" --app-id dev.rocosmo.rusthello)
 while read -r triple slot binname; do
 	[ -n "${triple:-}" ] || continue
 	echo "build-rust-container: compiling $triple -> $slot" >&2
-	(cd "$crate" && cargo zigbuild --release --target "$triple" >/dev/null 2>&1) || { echo "build-rust-container: cargo zigbuild $triple failed" >&2; exit 1; }
+	case "$triple" in *-netbsd) build=(cargo build);; *) build=(cargo zigbuild);; esac
+	(cd "$crate" && "${build[@]}" --release --target "$triple" >/dev/null 2>&1) || { echo "build-rust-container: ${build[*]} $triple failed" >&2; exit 1; }
 	bin="$CARGO_TARGET_DIR/$triple/release/$binname"
 	[ -f "$bin" ] || { echo "build-rust-container: missing $bin" >&2; exit 1; }
 	pack_args+=("--$slot" "$bin")
 done <<EOF
 $builds
 EOF
+[ -z "$mac_arm" ] || pack_args+=(--macos-arm64 "$mac_arm")
+[ -z "$mac_x86" ] || pack_args+=(--macos-x86_64 "$mac_x86")
 
 "$pack" "${pack_args[@]}" -o "$out"
