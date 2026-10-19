@@ -242,8 +242,27 @@ written per OS in the host, the work Cosmopolitan does for C programs.
     signature to run; notarization is not required for a file launched from a
     shell.
   - The extracted file is written by `dd`, so it carries no quarantine
-    attribute. Gatekeeper assessment of the downloaded polyglot itself, when
-    launched from Finder or other GUI paths, is untested.
+    attribute.
+  - A browser-downloaded container (2026-10-18, macOS 26.7.1 on Apple
+    Silicon; a universal zstd container marked with the
+    `com.apple.quarantine` value Safari writes):
+    - From a shell it runs: `./app` and `sh app` both exit with the
+      payload's status. The shell reads the file as a script, so Gatekeeper
+      is never consulted. The runtime and payload it writes carry no
+      quarantine attribute (`tests/cli/macos_quarantine.bash`).
+    - `spctl --assess --type execute` rejects it ("no usable signature").
+    - Opened from Finder (LaunchServices, here via `open`), it does not run.
+      LaunchServices hands it to Terminal.app. The quarantine resolver runs
+      XProtect, then `syspolicyd` reports error -67062 (`errSecCSUnsigned`),
+      and `CoreServicesUIAgent` shows a modal Gatekeeper dialog. The
+      container never started, so no payload was extracted. The dialog's text
+      was not captured; the run was remote.
+    - Removing the attribute (`xattr -d com.apple.quarantine app`) or
+      starting the file from a shell avoids the dialog. A Mach-O carries its
+      signature inside the file, but this file is a PE, so `codesign` could
+      only attach one as extended attributes, which a plain HTTP download
+      does not keep (untested). Double-click users would need a signed,
+      notarized `.app` bundle, a separate artifact (PLAN.md).
   - Distributing through a hardened-runtime, notarized app bundle would be a
     different packaging path.
 - **Windows.** The PE is unsigned. SmartScreen and antivirus reputation for an
