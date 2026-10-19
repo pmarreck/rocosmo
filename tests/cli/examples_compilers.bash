@@ -22,8 +22,9 @@ if [ -x "$pack_bin" ] && [ -n "$zig_real" ] && [ -n "$zig_lib" ]; then
 	assert_rc0 "pack the zig compiler into a container"
 	run_capture env XDG_CACHE_HOME="$exc/zc" "$exc/zig" version
 	assert_eq "the zig container reports zig's own version" "$(zig version)" "$out"
-	# Zig finds its std lib next to its executable; from the container that copy
-	# is not on disk, so point ZIG_LIB_DIR at a matching lib/ (Zig's own rule).
+	# Zig finds its std lib next to its executable. This container is packed
+	# without --data, so point ZIG_LIB_DIR at a matching lib/ (Zig's own rule);
+	# tests/cli/data_tree.bash covers lib/ packed into the container.
 	run_capture env ZIG_LIB_DIR="$zig_lib" XDG_CACHE_HOME="$exc/zc" "$exc/zig" build-exe "$ROOT/examples/hello.zig" -femit-bin="$exc/zhello" -O ReleaseSmall --cache-dir "$exc/zig-cache" --global-cache-dir "$exc/zig-gcache"
 	assert_rc0 "the zig container compiles examples/hello.zig"
 	run_capture "$exc/zhello"

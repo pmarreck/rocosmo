@@ -17,49 +17,52 @@ Zig ships one self-contained executable per platform (the Linux builds are
 statically linked against musl), so no compiler is needed to make a universal
 `zig`. `examples/build-zig-container` downloads the official Zig 0.16.0 release
 for all 16 slots rocosmo has, checks each archive against the SHA-256 published
-in ziglang.org's download index, and packs the 16 `zig` executables.
+in ziglang.org's download index, and packs the 16 `zig` executables together
+with Zig's `lib/` (the standard library, libc headers and compiler-rt sources).
 
 ```sh
 examples/build-zig-container ./zig            # zstd level 19 by default
 ./zig --rocosmo-platforms                     # the 16 targets it carries
+./zig build-exe examples/hello.zig -femit-bin=hello && ./hello; echo $?   # 145
 ```
 
-Result: a universal `zig` of **642,023,700 bytes** (the 16 inputs total about
-2.8 GB). Packing at level 19 took 59 minutes on one core.
+Result: a universal `zig` of **522,616,162 bytes** that compiles with no setup:
+no `ZIG_LIB_DIR`, nothing to unpack beside it. The inputs are the 16 executables
+(about 2.8 GB) plus `lib/` (113 MB, 19,542 files). Packing at level 19 took
+10 minutes 21 seconds on a 128-core host; rocosmo-pack compresses the frames on
+8 threads by default (`--jobs`).
 
-| System | How it ran | `zig version` |
+Zig finds `lib/` by walking up from its own executable, and `lib/` is
+byte-identical in all 16 official downloads. So `lib/` is packed once, as a
+data tree (`rocosmo-pack --data`), and on first run the container installs it
+beside the cached `zig`. The Windows `zig.exe` sits behind the launcher
+(`--windows-launcher`), which installs it the same way. The tree holds files
+only: the 6 empty directories of the official `lib/` are not recreated, and
+none of the tests below needed them.
+
+| System | How it ran | Result, with no `ZIG_LIB_DIR` |
 | --- | --- | --- |
-| Linux x86_64 | native | `0.16.0` |
-| Linux aarch64, arm (32-bit), riscv64, powerpc64le, x86 (i386), loongarch64, s390x | emulated (qemu-user) | `0.16.0` on each |
-| macOS 26.7.1 arm64 | native (Apple Silicon) | `0.16.0` |
-| macOS x86_64 | Rosetta 2 on Apple Silicon | `0.16.0` |
-| Windows 10 x86_64 | native, as `zig.exe`; Microsoft Defender scan finds no threat | `0.16.0` |
+| Linux x86_64 | native, empty environment | `zig version` 0.16.0; compiles `hello.zig`, which exits 145 |
+| macOS 26.7.1 arm64 | native (Apple Silicon) | compiles `hello.zig`, which exits 145 |
+| macOS x86_64 | Rosetta 2 on Apple Silicon | compiles `hello.zig`, which exits 145 |
+| Windows 10 x86_64 | native, as `zig.exe`; Microsoft Defender scan of the container and of the installed directory finds no threat | compiles `hello.zig`, which exits 145 |
+| Linux aarch64, riscv64 | emulated (qemu-user) | compiles and links `hello.zig` (`-fno-lld`); it exits 145 under qemu |
+| Linux arm (32-bit), powerpc64le, x86 (i386), loongarch64, s390x | emulated (qemu-user) | `zig version` 0.16.0; compiles `hello.zig` and its std imports to assembly (600,000-750,000 lines); linking not run (see below) |
 | FreeBSD x86_64 and aarch64, NetBSD x86_64, OpenBSD x86_64 and aarch64 | not run from this container (see below) | |
 
-Every POSIX slot's payload, rebuilt from the container, is byte-identical to
-the official release's `zig` for that system (15 of 15). The BSD rows were not
-run from this container, because the test VMs have 1 GB of memory and the
-container alone is 642 MB. The same dispatcher and runtimes run on those
-systems in the BSD VM tests (P9) and in the Rust example below.
+The installed `zig` is byte-identical to the official release's on every
+system checked (Linux, both macOS builds, Windows), and so is every one of the
+19,542 `lib/` files.
 
-To compile, Zig needs its `lib/` directory (the standard library, libc headers
-and compiler-rt sources), as the official download does: that one is `zig`
-plus `lib/` in one folder. `lib/` is the same on every system; the 16 official
-0.16.0 downloads hold byte-identical `lib/` trees (113 MB), so one copy serves
-the universal `zig` everywhere. It has to be named with `ZIG_LIB_DIR`, though.
-Zig looks for `lib/` by walking up from its own executable, and here that is
-rocosmo's cached copy of the payload (at about 170 MB, the Linux build is over
-the 64 MB limit for running from memory), so a `lib/` placed beside the
-container or in the working directory is not found:
-
-```sh
-ZIG_LIB_DIR=/path/to/zig-0.16.0/lib ./zig build-exe examples/hello.zig -femit-bin=hello
-./hello; echo $?        # 145
-```
-
-That compiled and ran on Linux x86_64 and on Windows 10 (with `ZIG_LIB_DIR`
-set in PowerShell); without `ZIG_LIB_DIR` it fails with "unable to find zig
-installation directory".
+The emulated rows stop short of linking for reasons outside rocosmo. Zig links
+by running itself again as LLD, and qemu-user (without binfmt_misc
+registration) cannot start that foreign child process. Zig's in-process linker
+(`-fno-lld`) covers aarch64 and riscv64 but not the other five CPUs. The two
+32-bit builds also need `-j1` under qemu on this 128-CPU host; with one thread
+per CPU they run out of address space. The BSD rows were not run from this
+container because the test VMs have 1 GB of memory. The same dispatcher and
+runtimes run on those systems in the BSD VM tests (P9) and in the Rust example
+below.
 
 ## Rust: the compiler's output as one file
 
